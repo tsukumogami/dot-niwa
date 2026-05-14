@@ -119,8 +119,27 @@ Implementation happens in the `tsuku` monorepo:
 
 ## Temporary Artifacts (wip/)
 
-The `wip/` (Work In Progress) directory holds temporary artifacts during niwa workflow commands:
+The `wip/` (Work In Progress) directory holds temporary artifacts during niwa workflow commands. It is a coordinator-handoff staging area: agents drop intermediate artifacts there during multi-step workflows, and the workflow's cleanup phase deletes them before the PR can merge.
 
-**Important**: This directory must be cleaned before PR merge. CI enforces this check.
+### The wip-hygiene rule
+
+Files under `wip/` are non-durable. They MUST NOT be referenced from any committed final artifact — not from frontmatter (e.g. `upstream:`), not from prose, not from code comments — and they MUST be removed from the branch before a PR can merge. **This rule applies workspace-wide, to every repo regardless of visibility (public or private).**
+
+Why both halves matter:
+
+- Cleanup deletes the physical files. Any committed reference to a `wip/...` path becomes a dangling pointer the instant cleanup runs, breaking the audit trail for the artifact a future reader is trying to follow.
+- "Clean up wip/" is two operations, not one: (1) delete the files, (2) grep committed prose, frontmatter, and code for `wip/` and remove every reference. Both must happen before the cleanup commit lands.
+
+The rule is workspace-wide because `wip/` is a workflow primitive, not a CI artifact. Private repos run the same workflows as public ones; orphan references break audit trails in both, and the staging-then-delete contract is identical regardless of visibility.
+
+### Enforcement
+
+The `shirabe:design` and `shirabe:plan` skills enforce this rule via their Phase 0 validation step (cross-repo path resolution, `wip/...` reject in `upstream:` frontmatter, references-section scan). Public-repo CI also runs a grep-based check on every PR. Private repos rely on the skill-level check plus reviewer discipline; the rule is identical.
+
+### Storage and resumability
 
 **Do NOT .gitignore wip/.** These files are committed to feature branches during workflows and cleaned before merge. PRs use squash-merge, so wip/ artifacts never appear in the main branch history. Gitignoring wip/ breaks workflow resumability since agents need to `git add` state files during multi-issue implementations.
+
+### Private overlay note
+
+The private workspace overlay (`tsukumogami/dot-niwa-overlay`) carries its own CLAUDE.md fragments for private-visibility repos. Those fragments must mirror this rule verbatim — the canonical wording lives here so the overlay can copy-and-keep-in-sync rather than re-derive the framing.
