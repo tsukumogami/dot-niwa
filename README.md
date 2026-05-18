@@ -13,7 +13,7 @@ GITHUB_TOKEN=$(gh auth token) niwa create
 ## Structure
 
 ```
-workspace.toml       Workspace declaration
+.niwa/workspace.toml Workspace declaration
 claude/              CLAUDE.md content hierarchy
 hooks/               Claude Code hook scripts (auto-discovered)
 env/                 Environment files (auto-discovered)
