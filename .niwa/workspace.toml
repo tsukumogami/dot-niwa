@@ -18,6 +18,17 @@ plugins = ["shirabe@shirabe"]
 matcher = "Bash"
 scripts = ["hooks/pre_tool_use/gate-online.sh"]
 
+# PR-body guard (pr-template-gate client-side enforcement). Thin pass-through
+# that runs the on-PATH `shirabe pr-body-hook`; the binary reuses the same
+# check_pr_body engine the CI pr-body.yml gate uses to catch a malformed
+# `gh pr create` / `gh pr edit` before it runs, and fails safe to no-op when
+# the binary is absent or outdated. Composes with the gate-online entry above
+# (Claude Code runs multiple PreToolUse Bash hooks). Depends on a shirabe
+# release shipping the `pr-body-hook` subcommand (tsukumogami/shirabe#223).
+[[claude.hooks.pre_tool_use]]
+matcher = "Bash"
+scripts = ["hooks/pre_tool_use/pr-body-guard.sh"]
+
 [[claude.hooks.stop]]
 scripts = ["hooks/stop/workflow-continue.sh"]
 
