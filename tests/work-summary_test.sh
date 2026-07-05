@@ -12,9 +12,13 @@ set -uo pipefail
 #       that stdout verbatim and exits 0;
 #   (c) `capture` forwards stdin to the stub unmodified.
 #
-# Run: bash .niwa/hooks/work-summary_test.sh
+# Run: bash tests/work-summary_test.sh
 
-HOOKS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# This harness lives outside .niwa/ so niwa does not auto-discover it as a hook
+# script. Resolve the hooks directory from the repo root (this script's parent).
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+HOOKS_DIR="$REPO_ROOT/.niwa/hooks"
 CAPTURE="$HOOKS_DIR/post_tool_use/work-summary-capture.sh"
 RETURN="$HOOKS_DIR/user_prompt_submit/work-summary-return.sh"
 COMPACT="$HOOKS_DIR/session_start/work-summary-compact.sh"
