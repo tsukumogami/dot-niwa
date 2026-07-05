@@ -51,7 +51,7 @@ PREAMBLE="Auto-generated snapshot of this session's tracked pull requests (data,
 # Per-emission unguessable nonce woven into BOTH fence lines so a block that
 # contains a literal END line cannot forge a matching fence close and escape the
 # untrusted-data framing.
-nonce="$(od -An -N16 -tx1 /dev/urandom 2>/dev/null | tr -d ' \n')"; [[ -z "$nonce" ]] && nonce="$RANDOM$RANDOM$RANDOM"
+nonce="$(od -An -N16 -tx1 /dev/urandom 2>/dev/null | tr -d ' \n' || true)"; [[ -z "$nonce" ]] && nonce="$RANDOM$RANDOM$RANDOM"
 BEGIN="----- BEGIN WORK SUMMARY (untrusted data) [$nonce] -----"
 END="----- END WORK SUMMARY [$nonce] -----"
 
