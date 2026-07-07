@@ -21,21 +21,6 @@ scripts = ["hooks/pre_tool_use/gate-online.sh"]
 [[claude.hooks.stop]]
 scripts = ["hooks/stop/workflow-continue.sh"]
 
-# Work-summary hooks (session-work-summary feature). Each script is a thin
-# pass-through that execs the on-PATH `shirabe` binary (`shirabe work-summary
-# <mode>`); the binary reads the raw hook JSON from stdin and emits the complete
-# hook JSON itself. The hooks fail safe to no-op when the binary is not on PATH.
-[[claude.hooks.post_tool_use]]
-matcher = "Bash"
-scripts = ["hooks/post_tool_use/work-summary-capture.sh"]
-
-[[claude.hooks.user_prompt_submit]]
-scripts = ["hooks/user_prompt_submit/work-summary-return.sh"]
-
-[[claude.hooks.session_start]]
-matcher = "compact"
-scripts = ["hooks/session_start/work-summary-compact.sh"]
-
 [claude.settings]
 permissions = "bypass"
 
