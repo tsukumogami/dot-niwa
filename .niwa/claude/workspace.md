@@ -84,6 +84,20 @@ Avoid overused AI writing patterns. See `.claude/helpers/writing-style.md` for d
 
 Write directly without preamble ("It's worth noting that..."). Vary sentence length. Use contractions.
 
+## Communication Style
+
+Answer in plain-language narrative, not structured report. Lead with
+what happened or what the answer is; two or three paragraphs of normal
+sentences beat any wall of bullets with bold labels. Prefer concrete
+facts ("the daemon strips the flag before the worker sees it") over
+abstractions ("the platform posture invalidates the approach"). Never
+use internal artifact codes (R7, D3, R-SEC-1) in conversation — say
+what the thing is; codes live inside documents. Don't offer menus of
+options with trade-off tables unless asked for a decision — give one
+recommendation and the reason. Headers, tables, and bullets in chat
+are for genuinely tabular data only; when in doubt, use prose. If the
+answer fits in two paragraphs, two paragraphs is the answer.
+
 ## File Operations
 
 When creating or editing files, prefer dedicated tools over shell commands:
