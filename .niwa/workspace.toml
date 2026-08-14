@@ -32,23 +32,19 @@ promote = ["GH_TOKEN"]
 [env]
 files = ["env/workspace.env"]
 
-# Declare what secrets this workspace needs without specifying vault addresses.
-# The overlay provides [vault.provider] and resolves these via vault://.
-[env.secrets.required]
-ANTHROPIC_API_KEY  = "Anthropic API key for Claude — resolved by overlay vault"
-GH_TOKEN           = "GitHub PAT with repo scope — supplied via personal overlay"
-
+# Declare what secrets this workspace can use, without specifying where they come
+# from. Nothing here is required: every repo clones, builds and tests without any
+# of these set. Each description says what the key buys and what happens without
+# it, because that description is the only explanation a contributor gets — niwa
+# cannot tell them where a value was supposed to come from.
 [env.secrets.recommended]
-TAVILY_API_KEY     = "Tavily search API key — resolved by overlay vault"
-BRAVE_API_KEY      = "Brave search API key — resolved by overlay vault"
+GH_TOKEN           = "GitHub token. Without one, API calls are unauthenticated and capped at 60 requests/hour, which is usually enough to clone this org but will rate-limit a busy session. `gh auth token` prints one if you already use the gh CLI."
 
 [env.secrets.optional]
-TELEGRAM_BOT_TOKEN = "Telegram bot token for workflow notifications — resolved by overlay vault"
-
-[repos.niwa.env.secrets.required]
-INFISICAL_TEST_PROJECT_ID = "Infisical test project ID — resolved by overlay vault"
-INFISICAL_CLIENT_ID       = "Infisical machine identity client ID — resolved by overlay vault"
-INFISICAL_CLIENT_SECRET   = "Infisical machine identity client secret — resolved by overlay vault"
+ANTHROPIC_API_KEY  = "Anthropic API key. Only needed to run Claude Code against the API; a Claude subscription does not use one. Leave unset unless you are billing to an API key."
+TAVILY_API_KEY     = "Tavily search API key. Enables the Tavily provider for web search in research workflows; without it search falls back to DuckDuckGo."
+BRAVE_API_KEY      = "Brave search API key. Alternative web-search provider; same fallback applies when unset."
+TELEGRAM_BOT_TOKEN = "Telegram bot token. Enables workflow notifications to a Telegram channel; without it notifications are skipped."
 
 # --- Files ---
 
