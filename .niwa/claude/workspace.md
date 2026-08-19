@@ -23,7 +23,7 @@ actually cloned; this table says what each public repo is for.
 | `dot-niwa` | Workspace configuration for the tsukumogami org |
 | `.github` | Org community health files |
 
-A repo gets niwa-installed context when the workspace config declares content for it: either a `[claude.content.repos.*]` entry in `.niwa/workspace.toml`, or — with no entry — a file at `.niwa/claude/repos/<repo>.md`, which niwa picks up on its own. An entry may draw its text from this repo, from a configured overlay, or from both. Subdirectory context comes from the entry that declares it. Any other repo's `CLAUDE.md`, if it has one, is committed in that repo.
+Repo-level context is configured under `[claude.content.repos]` in `.niwa/workspace.toml`. A repo's own committed `CLAUDE.md`, where it has one, is separate and lives in that repo.
 
 ## Monorepo Structure (tsuku)
 
@@ -133,11 +133,7 @@ The rule is workspace-wide because `wip/` is a workflow primitive, not a CI arti
 
 The `shirabe:design` and `shirabe:plan` skills enforce this rule via their Phase 0 validation step (cross-repo path resolution, `wip/...` reject in `upstream:` frontmatter, references-section scan).
 
-CI enforcement is per-repo and covers only the first half of the rule. Where a repo has the check, it fails a pull request whose `wip/` directory survives; the exact trigger and whether draft PRs are exempt vary, so read the repo's own CI configuration rather than assuming. Many repos have no check at all.
-
-Nothing in CI catches a dangling `wip/` reference — assume it will not be caught. The second half of the rule, removing every reference before the cleanup commit lands, rests entirely on the skill-level check and reviewer discipline, in every repo, including the ones whose CI catches a surviving directory.
-
-The rule itself is the same everywhere; only the enforcement differs.
+CI coverage is per-repo and catches only a surviving `wip/` directory, never a dangling reference to one. Removing every reference rests on review, in every repo.
 
 ### Storage and resumability
 
