@@ -9,31 +9,6 @@ Tsuku is a self-contained package manager for developer tools. It installs tools
 - **Reproducible**: Recipes define exact installation steps
 - **Version-aware**: Multiple versions can coexist, managed via symlinks
 
-## Workspace Structure
-
-```
-{workspace}/
-├── CLAUDE.md                    # This file (org-wide context)
-├── .claude/                     # Shared commands and skills
-└── public/
-    ├── CLAUDE.md                # Public visibility context
-    ├── .github/                 # Org community health files
-    ├── koto/                    # Workflow orchestration engine
-    ├── niwa/                    # Workspace manager CLI
-    ├── shirabe/                 # Workflow skills plugin
-    └── tsuku/                   # Monorepo with component configs
-```
-
-## Repositories
-
-| Repository | Description | Visibility |
-|------------|-------------|------------|
-| `tsuku` | Monorepo: CLI, recipes, website, telemetry | Public |
-| `koto` | Workflow orchestration engine for AI coding agents | Public |
-| `niwa` | Workspace manager CLI | Public |
-| `shirabe` | Workflow skills plugin | Public |
-| `.github` | Org community health files | Public |
-
 ## Monorepo Structure (tsuku)
 
 The `tsuku` repository is a monorepo containing all public-facing components:
@@ -73,7 +48,7 @@ The `tsuku` repository is a monorepo containing all public-facing components:
 
 ## Writing Style
 
-Avoid overused AI writing patterns. See `.claude/helpers/writing-style.md` for details.
+Avoid overused AI writing patterns. The full guidance ships in the `tsukumogami` Claude plugin as its writing-style helper.
 
 **Quick reference - avoid these words:**
 - "tier/tiered" (use: level, category, phase)
@@ -118,14 +93,6 @@ This improves user experience by providing better feedback and error handling.
 3. **Version providers**: Pluggable system for resolving versions from different sources
 4. **Nix backend for complex deps**: Some tools use nix-portable for hermetic builds
 
-## Development Workflow
-
-Implementation happens in the `tsuku` monorepo:
-- CLI changes: root Go code
-- Recipe changes: `recipes/` directory
-- Website changes: `website/` directory
-- Telemetry changes: `telemetry/` directory
-
 ## Testing
 
 - Unit tests: `go test ./...` in tsuku/
@@ -148,12 +115,8 @@ The rule is workspace-wide because `wip/` is a workflow primitive, not a CI arti
 
 ### Enforcement
 
-The `shirabe:design` and `shirabe:plan` skills enforce this rule via their Phase 0 validation step (cross-repo path resolution, `wip/...` reject in `upstream:` frontmatter, references-section scan). Public-repo CI also runs a grep-based check on every PR. Private repos rely on the skill-level check plus reviewer discipline; the rule is identical.
+The `shirabe:design` and `shirabe:plan` skills enforce this rule via their Phase 0 validation step (cross-repo path resolution, `wip/...` reject in `upstream:` frontmatter, references-section scan). CI enforcement is per-repo rather than universal: `tsuku` runs a grep-based check on every PR (`check-artifacts.yml`), and the other repos rely on the skill-level check plus reviewer discipline. The rule is identical everywhere regardless of which enforcement a repo has.
 
 ### Storage and resumability
 
 **Do NOT .gitignore wip/.** These files are committed to feature branches during workflows and cleaned before merge. PRs use squash-merge, so wip/ artifacts never appear in the main branch history. Gitignoring wip/ breaks workflow resumability since agents need to `git add` state files during multi-issue implementations.
-
-### Private overlay note
-
-The private workspace overlay (`tsukumogami/dot-niwa-overlay`) carries its own CLAUDE.md fragments for private-visibility repos. Those fragments must mirror this rule verbatim — the canonical wording lives here so the overlay can copy-and-keep-in-sync rather than re-derive the framing.
