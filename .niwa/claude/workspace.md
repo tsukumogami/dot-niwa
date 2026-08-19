@@ -133,9 +133,9 @@ The rule is workspace-wide because `wip/` is a workflow primitive, not a CI arti
 
 The `shirabe:design` and `shirabe:plan` skills enforce this rule via their Phase 0 validation step (cross-repo path resolution, `wip/...` reject in `upstream:` frontmatter, references-section scan).
 
-CI enforcement is per-repo and covers only the first half of the rule. Where a repo has the check, it fails a pull request whose `wip/` directory survives; the exact trigger and whether draft PRs are exempt vary, so read the repo's own workflows rather than assuming. Many repos have no check at all.
+CI enforcement is per-repo and covers only the first half of the rule. Where a repo has the check, it fails a pull request whose `wip/` directory survives; the exact trigger and whether draft PRs are exempt vary, so read the repo's own CI configuration rather than assuming. Many repos have no check at all.
 
-No repo greps committed prose for `wip/` references. The second half of the rule — removing every reference before the cleanup commit lands — rests entirely on the skill-level check and reviewer discipline, in every repo, including the ones whose CI catches a surviving directory.
+Nothing in CI catches a dangling `wip/` reference — assume it will not be caught. The second half of the rule, removing every reference before the cleanup commit lands, rests entirely on the skill-level check and reviewer discipline, in every repo, including the ones whose CI catches a surviving directory.
 
 The rule itself is the same everywhere; only the enforcement differs.
 
