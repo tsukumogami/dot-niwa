@@ -9,10 +9,10 @@ Tsuku is a self-contained package manager for developer tools. It installs tools
 - **Reproducible**: Recipes define exact installation steps
 - **Version-aware**: Multiple versions can coexist, managed via symlinks
 
-## Repositories
+## Public Repositories
 
-The generated `workspace-context.md` lists what an instance actually cloned; this
-table says what each public repo is for.
+The generated `workspace-context.md` at the instance root lists what this instance
+actually cloned; this table says what each public repo is for.
 
 | Repository | Description |
 |------------|-------------|
@@ -23,9 +23,11 @@ table says what each public repo is for.
 | `dot-niwa` | Workspace configuration for the tsukumogami org |
 | `.github` | Org community health files |
 
-niwa installs repo-level context for `tsuku` and `koto` only, from the content
-entries in `workspace.toml`. Every other repo either carries its own committed
-`CLAUDE.md` or has none.
+niwa installs repo-level context for `tsuku` and `koto` only, from the
+`[claude.content.repos.*]` entries in `dot-niwa`'s `.niwa/workspace.toml`
+(`tsuku` also gets context for its `recipes/`, `website/`, and `telemetry/`
+subdirectories). Any other repo's `CLAUDE.md`, if it has one, is committed in
+that repo.
 
 ## Monorepo Structure (tsuku)
 
@@ -118,7 +120,7 @@ This improves user experience by providing better feedback and error handling.
 
 ## Temporary Artifacts (wip/)
 
-The `wip/` (Work In Progress) directory holds temporary artifacts during niwa workflow commands. It is a coordinator-handoff staging area: agents drop intermediate artifacts there during multi-step workflows, and the workflow's cleanup phase deletes them before the PR can merge.
+The `wip/` (Work In Progress) directory holds temporary artifacts during multi-step skill workflows. It is a coordinator-handoff staging area: agents drop intermediate artifacts there during multi-step workflows, and the workflow's cleanup phase deletes them before the PR can merge.
 
 ### The wip-hygiene rule
 
@@ -135,7 +137,7 @@ The rule is workspace-wide because `wip/` is a workflow primitive, not a CI arti
 
 The `shirabe:design` and `shirabe:plan` skills enforce this rule via their Phase 0 validation step (cross-repo path resolution, `wip/...` reject in `upstream:` frontmatter, references-section scan).
 
-CI enforcement is per-repo and covers only the first half of the rule. `tsuku` and `koto` fail a non-draft PR when `wip/` exists and is non-empty; both skip draft PRs, since artifacts are expected mid-work. Nothing in CI anywhere greps committed prose for `wip/` references, so the second half — removing every reference before the cleanup commit lands — rests on the skill-level check and reviewer discipline. Every other repo, this one included, has neither check. The rule is identical everywhere regardless of what enforces it.
+CI enforcement is per-repo and covers only the first half of the rule. `tsuku` and `koto` fail a non-draft PR when `wip/` exists and is non-empty; both skip draft PRs, since artifacts are expected mid-work. No other public repo has either check, this one included. Nothing in CI anywhere greps committed prose for `wip/` references, so the second half — removing every reference before the cleanup commit lands — rests on the skill-level check and reviewer discipline. The rule itself is the same in every repo; only the enforcement differs.
 
 ### Storage and resumability
 
