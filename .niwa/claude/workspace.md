@@ -23,8 +23,6 @@ actually cloned; this table says what each public repo is for.
 | `dot-niwa` | Workspace configuration for the tsukumogami org |
 | `.github` | Org community health files |
 
-Repo-level context is configured under `[claude.content.repos.*]` in `dot-niwa`'s `.niwa/workspace.toml` and arrives as `CLAUDE.local.md` — edit the source, not the generated file. A repo's own committed `CLAUDE.md`, if it has one, is separate and lives in that repo.
-
 ## Monorepo Structure (tsuku)
 
 The `tsuku` repository is a monorepo containing all public-facing components:
@@ -131,7 +129,7 @@ The rule is workspace-wide because `wip/` is a workflow primitive, not a CI arti
 
 ### Enforcement
 
-CI coverage is per-repo and catches only a `wip/` directory that still holds files; some shirabe skills check the rule during their runs. Nothing anywhere catches a dangling reference, so assume one reaches `main` unless you remove it.
+CI coverage is per-repo and catches only a `wip/` directory that still holds files; some shirabe skills check the rule during their runs, including a `git grep` for `wip/` paths before they finalize. No CI check anywhere greps committed content, so a dangling reference reaches `main` unless a skill run or a reviewer removes it.
 
 ### Storage and resumability
 
