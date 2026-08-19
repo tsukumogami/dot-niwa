@@ -12,7 +12,7 @@ This is a public repository. Content should be written for external consumption:
 
 ## Default Scope: Tactical
 
-This repo is for tactical planning. When running /tsukumogami:explore or /tsukumogami:plan here:
+This repo is for tactical planning. When running /shirabe:explore or /shirabe:plan here:
 - Designs focus on "how to build it" (implementation)
 - Issues are atomic, implementable work items
 - Reference upstream strategic designs if applicable

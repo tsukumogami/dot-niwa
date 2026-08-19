@@ -131,9 +131,7 @@ The rule is workspace-wide because `wip/` is a workflow primitive, not a CI arti
 
 ### Enforcement
 
-The `shirabe:design` and `shirabe:plan` skills enforce this rule via their Phase 0 validation step (cross-repo path resolution, `wip/...` reject in `upstream:` frontmatter, references-section scan).
-
-CI coverage is per-repo and catches only a surviving `wip/` directory, never a dangling reference to one. Removing every reference rests on review, in every repo.
+Every shirabe artifact skill enforces this rule against its `references/wip-hygiene.md`, at setup and again before it finalizes. CI coverage is per-repo and catches only a `wip/` directory that still holds files, never a dangling reference to one.
 
 ### Storage and resumability
 
