@@ -133,7 +133,9 @@ The rule is workspace-wide because `wip/` is a workflow primitive, not a CI arti
 
 ### Enforcement
 
-The `shirabe:design` and `shirabe:plan` skills enforce this rule via their Phase 0 validation step (cross-repo path resolution, `wip/...` reject in `upstream:` frontmatter, references-section scan). CI enforcement is per-repo rather than universal: `tsuku` runs a grep-based check on every PR (`check-artifacts.yml`), and the other repos rely on the skill-level check plus reviewer discipline. The rule is identical everywhere regardless of which enforcement a repo has.
+The `shirabe:design` and `shirabe:plan` skills enforce this rule via their Phase 0 validation step (cross-repo path resolution, `wip/...` reject in `upstream:` frontmatter, references-section scan).
+
+CI enforcement is per-repo and covers only the first half of the rule. `tsuku` and `koto` fail a non-draft PR when `wip/` exists and is non-empty; both skip draft PRs, since artifacts are expected mid-work. Nothing in CI anywhere greps committed prose for `wip/` references, so the second half — removing every reference before the cleanup commit lands — rests on the skill-level check and reviewer discipline. Every other repo, this one included, has neither check. The rule is identical everywhere regardless of what enforces it.
 
 ### Storage and resumability
 
