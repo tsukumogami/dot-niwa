@@ -23,7 +23,7 @@ actually cloned; this table says what each public repo is for.
 | `dot-niwa` | Workspace configuration for the tsukumogami org |
 | `.github` | Org community health files |
 
-Repo-level context is configured under `[claude.content.repos.*]` in `.niwa/workspace.toml`. A repo's own committed `CLAUDE.md`, if it has one, is separate and lives in that repo.
+Repo-level context is configured under `[claude.content.repos.*]` in `dot-niwa`'s `.niwa/workspace.toml`. A repo's own committed `CLAUDE.md`, if it has one, is separate and lives in that repo.
 
 ## Monorepo Structure (tsuku)
 
