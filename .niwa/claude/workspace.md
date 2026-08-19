@@ -23,10 +23,7 @@ actually cloned; this table says what each public repo is for.
 | `dot-niwa` | Workspace configuration for the tsukumogami org |
 | `.github` | Org community health files |
 
-niwa installs repo-level context only for repos with a `[claude.content.repos.*]`
-entry in `dot-niwa`'s `.niwa/workspace.toml`, plus whichever subdirectories those
-entries declare. Any other repo's `CLAUDE.md`, if it has one, is committed in
-that repo.
+A repo gets niwa-installed context when `dot-niwa` carries content for it: either a `[claude.content.repos.*]` entry in `.niwa/workspace.toml`, or — with no entry — a file at `.niwa/claude/repos/<repo>.md`, which niwa picks up on its own. Subdirectory context comes from the entry that declares it. Any other repo's `CLAUDE.md`, if it has one, is committed in that repo.
 
 ## Monorepo Structure (tsuku)
 
