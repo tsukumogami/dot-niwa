@@ -131,7 +131,7 @@ The rule is workspace-wide because `wip/` is a workflow primitive, not a CI arti
 
 ### Enforcement
 
-The shirabe skills that stage work in `wip/` enforce this rule against the plugin's `references/wip-hygiene.md`, at setup and again before they finalize. CI coverage is per-repo and catches only a `wip/` directory that still holds files, never a dangling reference to one.
+Enforcement is partial on both sides. Some shirabe skills check this rule against the plugin's `references/wip-hygiene.md`, at setup and again before they finalize; CI coverage is per-repo and catches only a `wip/` directory that still holds files. Nothing anywhere catches a dangling reference, so assume one reaches `main` unless you remove it.
 
 ### Storage and resumability
 
