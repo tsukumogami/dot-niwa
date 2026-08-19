@@ -23,6 +23,8 @@ actually cloned; this table says what each public repo is for.
 | `dot-niwa` | Workspace configuration for the tsukumogami org |
 | `.github` | Org community health files |
 
+A repo's `CLAUDE.local.md` is generated — edit its source in `dot-niwa`, not the generated file.
+
 ## Monorepo Structure (tsuku)
 
 The `tsuku` repository is a monorepo containing all public-facing components:
