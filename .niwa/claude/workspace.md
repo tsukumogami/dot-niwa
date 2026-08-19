@@ -66,7 +66,7 @@ The `tsuku` repository is a monorepo containing all public-facing components:
 
 ## Writing Style
 
-Avoid overused AI writing patterns. The full guidance ships in the `tsukumogami` Claude plugin as its writing-style helper.
+Avoid overused AI writing patterns. `/shirabe:writing-style` carries the full guidance and can revise a draft against it.
 
 **Quick reference - avoid these words:**
 - "tier/tiered" (use: level, category, phase)
