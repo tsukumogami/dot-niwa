@@ -9,6 +9,24 @@ Tsuku is a self-contained package manager for developer tools. It installs tools
 - **Reproducible**: Recipes define exact installation steps
 - **Version-aware**: Multiple versions can coexist, managed via symlinks
 
+## Repositories
+
+The generated `workspace-context.md` at the instance root lists what an instance
+actually cloned. This table says what each public repo is for.
+
+| Repository | Description |
+|------------|-------------|
+| `tsuku` | Monorepo: CLI, recipes, website, telemetry |
+| `koto` | Workflow orchestration engine for AI coding agents |
+| `niwa` | Workspace manager CLI |
+| `shirabe` | Workflow skills plugin |
+| `dot-niwa` | Workspace configuration for the tsukumogami org |
+| `.github` | Org community health files |
+
+niwa installs repo-level context for `tsuku` and `koto` only, from the content
+entries in `workspace.toml`. Every other repo either carries its own committed
+`CLAUDE.md` or has none.
+
 ## Monorepo Structure (tsuku)
 
 The `tsuku` repository is a monorepo containing all public-facing components:
