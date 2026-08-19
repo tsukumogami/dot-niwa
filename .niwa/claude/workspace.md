@@ -11,8 +11,8 @@ Tsuku is a self-contained package manager for developer tools. It installs tools
 
 ## Repositories
 
-The generated `workspace-context.md` at the instance root lists what an instance
-actually cloned. This table says what each public repo is for.
+The generated `workspace-context.md` lists what an instance actually cloned; this
+table says what each public repo is for.
 
 | Repository | Description |
 |------------|-------------|
