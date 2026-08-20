@@ -9,30 +9,21 @@ Tsuku is a self-contained package manager for developer tools. It installs tools
 - **Reproducible**: Recipes define exact installation steps
 - **Version-aware**: Multiple versions can coexist, managed via symlinks
 
-## Workspace Structure
+## Public Repositories
 
-```
-{workspace}/
-├── CLAUDE.md                    # This file (org-wide context)
-├── .claude/                     # Shared commands and skills
-└── public/
-    ├── CLAUDE.md                # Public visibility context
-    ├── .github/                 # Org community health files
-    ├── koto/                    # Workflow orchestration engine
-    ├── niwa/                    # Workspace manager CLI
-    ├── shirabe/                 # Workflow skills plugin
-    └── tsuku/                   # Monorepo with component configs
-```
+The generated `workspace-context.md` at the instance root lists what this instance
+actually cloned; this table says what each public repo is for.
 
-## Repositories
+| Repository | Description |
+|------------|-------------|
+| `tsuku` | Monorepo: CLI, recipes, website, telemetry |
+| `koto` | Workflow orchestration engine for AI coding agents |
+| `niwa` | Workspace manager CLI |
+| `shirabe` | Workflow skills plugin |
+| `dot-niwa` | Workspace configuration for the tsukumogami org |
+| `.github` | Org community health files |
 
-| Repository | Description | Visibility |
-|------------|-------------|------------|
-| `tsuku` | Monorepo: CLI, recipes, website, telemetry | Public |
-| `koto` | Workflow orchestration engine for AI coding agents | Public |
-| `niwa` | Workspace manager CLI | Public |
-| `shirabe` | Workflow skills plugin | Public |
-| `.github` | Org community health files | Public |
+A repo's `CLAUDE.local.md` is generated — edit its source in `dot-niwa`, not the generated file.
 
 ## Monorepo Structure (tsuku)
 
@@ -73,7 +64,7 @@ The `tsuku` repository is a monorepo containing all public-facing components:
 
 ## Writing Style
 
-Avoid overused AI writing patterns. See `.claude/helpers/writing-style.md` for details.
+Avoid overused AI writing patterns. `/shirabe:writing-style` carries the full guidance and can revise a draft against it.
 
 **Quick reference - avoid these words:**
 - "tier/tiered" (use: level, category, phase)
@@ -118,14 +109,6 @@ This improves user experience by providing better feedback and error handling.
 3. **Version providers**: Pluggable system for resolving versions from different sources
 4. **Nix backend for complex deps**: Some tools use nix-portable for hermetic builds
 
-## Development Workflow
-
-Implementation happens in the `tsuku` monorepo:
-- CLI changes: root Go code
-- Recipe changes: `recipes/` directory
-- Website changes: `website/` directory
-- Telemetry changes: `telemetry/` directory
-
 ## Testing
 
 - Unit tests: `go test ./...` in tsuku/
@@ -133,7 +116,7 @@ Implementation happens in the `tsuku` monorepo:
 
 ## Temporary Artifacts (wip/)
 
-The `wip/` (Work In Progress) directory holds temporary artifacts during niwa workflow commands. It is a coordinator-handoff staging area: agents drop intermediate artifacts there during multi-step workflows, and the workflow's cleanup phase deletes them before the PR can merge.
+The `wip/` (Work In Progress) directory holds temporary artifacts during multi-step skill workflows. It is a coordinator-handoff staging area: agents drop intermediate artifacts there during multi-step workflows, and the workflow's cleanup phase deletes them before the PR can merge.
 
 ### The wip-hygiene rule
 
@@ -148,12 +131,8 @@ The rule is workspace-wide because `wip/` is a workflow primitive, not a CI arti
 
 ### Enforcement
 
-The `shirabe:design` and `shirabe:plan` skills enforce this rule via their Phase 0 validation step (cross-repo path resolution, `wip/...` reject in `upstream:` frontmatter, references-section scan). Public-repo CI also runs a grep-based check on every PR. Private repos rely on the skill-level check plus reviewer discipline; the rule is identical.
+CI coverage is per-repo and catches only a `wip/` directory that still holds files; some shirabe skills check the rule during their runs, including a `git grep` for `wip/` paths before they finalize. No CI check anywhere greps committed content, so a dangling reference reaches `main` unless a skill run or a reviewer removes it.
 
 ### Storage and resumability
 
 **Do NOT .gitignore wip/.** These files are committed to feature branches during workflows and cleaned before merge. PRs use squash-merge, so wip/ artifacts never appear in the main branch history. Gitignoring wip/ breaks workflow resumability since agents need to `git add` state files during multi-issue implementations.
-
-### Private overlay note
-
-The private workspace overlay (`tsukumogami/dot-niwa-overlay`) carries its own CLAUDE.md fragments for private-visibility repos. Those fragments must mirror this rule verbatim — the canonical wording lives here so the overlay can copy-and-keep-in-sync rather than re-derive the framing.

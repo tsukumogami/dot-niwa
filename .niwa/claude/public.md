@@ -11,7 +11,7 @@ All repositories under this directory are public. When creating issues, PRs, com
 - Keep language professional and welcoming to open-source contributors
 - Only reference issues, PRs, and designs in public repos
 - Only link to public resources (no private repo links)
-- Never mention internal tooling or workflows (`/tsukumogami:explore`, `/tsukumogami:work-on`, `/tsukumogami:plan`, etc.)
+- Never mention internal tooling or workflows — private plugin commands, internal skill names, or workspace-only conventions. Plugins published from public repos (currently `shirabe`) may be named, with enough context for a reader who has not installed them.
 
 ## Tone and Style
 

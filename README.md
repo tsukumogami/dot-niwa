@@ -44,6 +44,17 @@ env/                 Environment files (auto-discovered)
 extensions/          Shirabe extension files (distributed via [files])
 ```
 
+### Repo-level context
+
+A repo receives context when this config declares it: a `[claude.content.repos.*]`
+entry in `.niwa/workspace.toml`, or — with no entry — a file at
+`claude/repos/<repo>.md`, which niwa discovers on its own. An entry may draw its
+text from here, from a private overlay, or from both, and only an entry can
+declare subdirectory content.
+
+Either way it arrives in the instance as that repo's `CLAUDE.local.md`. Edit the
+source here; the generated file is rewritten on every `niwa apply`.
+
 ## Updating
 
 After modifying workspace.toml or any config files:
