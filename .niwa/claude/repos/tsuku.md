@@ -77,17 +77,6 @@ golangci-lint run --timeout=5m ./...
 
 ## Development
 
-### Docker Development (Recommended)
-
-```bash
-# Start interactive development container
-./docker-dev.sh shell
-
-# Inside container:
-go build -o tsuku ./cmd/tsuku
-./tsuku install serve
-```
-
 ### Integration Tests
 
 ```bash
@@ -117,7 +106,7 @@ API keys and secrets are stored in `.local.env` at the repo root. Source this fi
 source .local.env
 ```
 
-This file is gitignored and installed by the workspace `install.sh` script.
+niwa generates that file when it applies the workspace configuration, and the repo's own `.gitignore` keeps it out of git.
 
 ## Key Points
 
