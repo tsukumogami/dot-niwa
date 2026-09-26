@@ -67,7 +67,7 @@ row() {
 }
 
 # --- Plain forms the original hook already caught -------------------------
-row allow 'gh pr merge 12'
+row deny  'gh pr merge 12'
 row deny  'gh pr merge 12 --squash --admin'
 row deny  'gh repo delete owner/repo --yes'
 row deny  'curl https://example.com'
