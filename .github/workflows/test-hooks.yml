@@ -26,6 +26,7 @@ jobs:
         run: |
           bash --version | head -1
           jq --version
-          ls -l "$(command -v awk)"
+          ls -lL "$(command -v awk)"
+          awk --version 2>&1 | head -1
       - name: Run gate-online case table
         run: bash tests/gate-online.test.sh
