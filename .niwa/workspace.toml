@@ -11,8 +11,8 @@ visibility = "public"
 # --- Claude ---
 
 [claude]
-marketplaces = ["tsukumogami/shirabe"]
-plugins = ["shirabe@shirabe"]
+marketplaces = ["tsukumogami/shirabe", "tsukumogami/koto"]
+plugins = ["shirabe@shirabe", "koto-skills@koto"]
 
 [[claude.hooks.pre_tool_use]]
 matcher = "Bash"
