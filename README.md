@@ -44,6 +44,10 @@ env/                 Environment files (auto-discovered)
 extensions/          Shirabe extension files (distributed via [files])
 ```
 
+Hook tests live outside `.niwa/`, because niwa installs every `.sh` under
+`hooks/<event>/` as a hook. Run the gate hook's case table with
+`bash tests/gate-online.test.sh`; CI runs it on Linux and macOS.
+
 ### Repo-level context
 
 A repo receives context when this config declares it: a `[claude.content.repos.*]`
