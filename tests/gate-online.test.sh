@@ -35,28 +35,35 @@ trap 'rm -rf "$broken"' EXIT
 printf '#!/bin/sh\nexit 1\n' > "$broken/awk"
 chmod +x "$broken/awk"
 
-# Copies of the hook where niwa installs it, under three instance names: the
+# Copies of the hook where niwa installs them, under three instance names: the
 # one exempt from the merge rule, an ordinary one, and a name that only
-# starts with the exempt one.
+# starts with the exempt one. niwa puts one copy at the instance root and one
+# in every repo, named gate-online.local.sh.
 installed() {
     local dir=$broken/$1/.claude/hooks/pre_tool_use
     mkdir -p "$dir"
-    cp "$hook" "$dir/gate-online.sh"
-    echo "$dir/gate-online.sh"
+    cp "$hook" "$dir/$2"
+    echo "$dir/$2"
 }
-exempt_hook=$(installed tsuku+coordinator_session_owner-f05c1900)
-other_hook=$(installed tsuku+some_worker-0123abcd)
-lookalike_hook=$(installed tsuku+coordinator_session_owner-f05c1900-copy)
+exempt_hook=$(installed tsuku+coordinator_session_owner-f05c1900 gate-online.sh)
+exempt_repo_hook=$(installed tsuku+coordinator_session_owner-f05c1900/private/vision gate-online.local.sh)
+other_hook=$(installed tsuku+some_worker-0123abcd gate-online.sh)
+other_repo_hook=$(installed tsuku+some_worker-0123abcd/private/vision gate-online.local.sh)
+lookalike_hook=$(installed tsuku+coordinator_session_owner-f05c1900-copy gate-online.sh)
+lookalike_repo_hook=$(installed tsuku+coordinator_session_owner-f05c1900-copy/private/vision gate-online.local.sh)
 
-# decide COMMAND [broken-awk|exempt|other|lookalike]
+# decide COMMAND [broken-awk|exempt|exempt-repo|other|other-repo|lookalike|lookalike-repo]
 #   -> prints deny|ask|allow, or error:<detail>
 decide() {
     local out status path=$PATH run=$hook
     case "${2:-}" in
         broken-awk) path=$broken:$PATH ;;
         exempt) run=$exempt_hook ;;
+        exempt-repo) run=$exempt_repo_hook ;;
         other) run=$other_hook ;;
+        other-repo) run=$other_repo_hook ;;
         lookalike) run=$lookalike_hook ;;
+        lookalike-repo) run=$lookalike_repo_hook ;;
     esac
     out=$(jq -n --arg c "$1" '{tool_name:"Bash",tool_input:{command:$c}}' | PATH=$path bash "$run")
     status=$?
@@ -72,7 +79,7 @@ decide() {
         echo "error:bad-json"
 }
 
-# row EXPECTED COMMAND [broken-awk|exempt|other|lookalike]
+# row EXPECTED COMMAND [MODE]   (MODE as for decide)
 row() {
     local expected=$1 command=$2 got
     got=$(decide "$command" "${3:-}")
@@ -221,6 +228,12 @@ row ask   'git push --force origin main' exempt
 row deny  'gh pr merge 12 --squash' other
 row deny  'gh api -X PUT repos/o/r/pulls/12/merge' other
 row deny  'gh pr merge 12 --squash' lookalike
+# The per-repo copy follows the same rule as the instance-level one.
+row allow 'gh pr merge 12 --squash' exempt-repo
+row allow 'gh api -X PUT repos/o/r/pulls/12/merge' exempt-repo
+row deny  'curl https://example.com' exempt-repo
+row deny  'gh pr merge 12 --squash' other-repo
+row deny  'gh pr merge 12 --squash' lookalike-repo
 
 # --- Known limits: the hook reads text, it does not run it ----------------
 # These pass because nothing in the command line names a gated command in

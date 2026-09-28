@@ -43,15 +43,18 @@
 # coordinator that lands pull requests while the owner is away. There the
 # three merge denials (gh pr merge, the REST merge endpoint, the GraphQL merge
 # mutations) are dropped; every other rule still applies. niwa installs this
-# script at <instance>/.claude/hooks/pre_tool_use/gate-online.sh and the
-# instance's own settings run it by that absolute path, so $0 names the
-# instance the session belongs to. A session elsewhere runs its own copy.
+# script at <instance>/.claude/hooks/pre_tool_use/gate-online.sh, and a copy
+# in every repo at <instance>/<group>/<repo>/.claude/hooks/pre_tool_use/
+# gate-online.local.sh. Each settings file runs its copy by that absolute
+# path, so $0 names the instance the session belongs to. A session elsewhere
+# runs its own instance's copy.
 #
 # Tests: tests/gate-online.test.sh at the repository root.
 
 MERGE_EXEMPT=0
 case "$0" in
     */tsuku+coordinator_session_owner-f05c1900/.claude/hooks/pre_tool_use/gate-online.sh) MERGE_EXEMPT=1 ;;
+    */tsuku+coordinator_session_owner-f05c1900/*/.claude/hooks/pre_tool_use/gate-online.local.sh) MERGE_EXEMPT=1 ;;
 esac
 
 INPUT=$(cat)
