@@ -35,11 +35,48 @@ trap 'rm -rf "$broken"' EXIT
 printf '#!/bin/sh\nexit 1\n' > "$broken/awk"
 chmod +x "$broken/awk"
 
-# decide COMMAND [broken-awk] -> prints deny|ask|allow, or error:<detail>
+# Copies of the hook where niwa installs them, under three instance names: the
+# one GATE_MERGE_EXEMPT_INSTANCE names, an ordinary one, and a name that only
+# starts with the exempt one. niwa puts one copy at the instance root and one
+# in every repo, named gate-online.local.sh. The instance names are made up.
+exempt_name=ws+owner_coordinator-00000000
+installed() {
+    local dir=$broken/$1/.claude/hooks/pre_tool_use
+    mkdir -p "$dir"
+    cp "$hook" "$dir/$2"
+    echo "$dir/$2"
+}
+exempt_hook=$(installed "$exempt_name" gate-online.sh)
+exempt_repo_hook=$(installed "$exempt_name/private/vision" gate-online.local.sh)
+other_hook=$(installed ws+some_worker-0123abcd gate-online.sh)
+other_repo_hook=$(installed ws+some_worker-0123abcd/private/vision gate-online.local.sh)
+lookalike_hook=$(installed "$exempt_name-copy" gate-online.sh)
+lookalike_repo_hook=$(installed "$exempt_name-copy/private/vision" gate-online.local.sh)
+
+# decide COMMAND [MODE] -> prints deny|ask|allow, or error:<detail>
+#   broken-awk      the repository copy, with an awk that always fails
+#   exempt, other, lookalike (and each with -repo for the per-repo copy)
+#                   an installed copy, with GATE_MERGE_EXEMPT_INSTANCE naming
+#                   the exempt instance, as every instance's settings do
+#   exempt-unset    the exempt instance's copy with the var unset
+#   exempt-slash    the exempt instance's copy with a var holding a path
+#                   that its own path does end in
+# Every other mode runs with the var unset.
 decide() {
-    local out status path=$PATH
-    [ "${2:-}" = broken-awk ] && path=$broken:$PATH
-    out=$(jq -n --arg c "$1" '{tool_name:"Bash",tool_input:{command:$c}}' | PATH=$path bash "$hook")
+    local out status path=$PATH run=$hook var=
+    case "${2:-}" in
+        broken-awk) path=$broken:$PATH ;;
+        exempt) run=$exempt_hook var=$exempt_name ;;
+        exempt-repo) run=$exempt_repo_hook var=$exempt_name ;;
+        other) run=$other_hook var=$exempt_name ;;
+        other-repo) run=$other_repo_hook var=$exempt_name ;;
+        lookalike) run=$lookalike_hook var=$exempt_name ;;
+        lookalike-repo) run=$lookalike_repo_hook var=$exempt_name ;;
+        exempt-unset) run=$exempt_hook ;;
+        exempt-slash) run=$exempt_hook var=${broken##*/}/$exempt_name ;;
+    esac
+    out=$(jq -n --arg c "$1" '{tool_name:"Bash",tool_input:{command:$c}}' |
+        env -u GATE_MERGE_EXEMPT_INSTANCE ${var:+GATE_MERGE_EXEMPT_INSTANCE=$var} PATH="$path" bash "$run")
     status=$?
     if [ "$status" -ne 0 ]; then
         echo "error:exit-$status"
@@ -53,7 +90,7 @@ decide() {
         echo "error:bad-json"
 }
 
-# row EXPECTED COMMAND [broken-awk]
+# row EXPECTED COMMAND [MODE]   (MODE as for decide)
 row() {
     local expected=$1 command=$2 got
     got=$(decide "$command" "${3:-}")
@@ -184,6 +221,34 @@ row allow $'cat <<EOF\nrun gh pr merge 12 by hand, in $HOME\nEOF'
 
 # --- The scanner itself fails: ask rather than allow ----------------------
 row ask   'git status' broken-awk
+
+# --- The one instance exempt from the merge rule ---------------------------
+# Merging is allowed there, in every form the merge rule denies.
+row allow 'gh pr merge 12 --squash' exempt
+row allow 'gh api -X PUT repos/o/r/pulls/12/merge' exempt
+row allow "gh api graphql -f query='mutation { mergePullRequest(input:{pullRequestId:\"x\"}) { clientMutationId } }'" exempt
+row allow 'cd repo && gh pr merge 12' exempt
+# Every other rule still applies there.
+row deny  'curl https://example.com' exempt
+row deny  'gh pr merge 12 && curl https://example.com' exempt
+row deny  'gh repo delete owner/repo --yes' exempt
+row deny  'niwa reap' exempt
+row ask   'gh issue close 5' exempt
+row ask   'git push --force origin main' exempt
+# Installed in any other instance, merging is still denied.
+row deny  'gh pr merge 12 --squash' other
+row deny  'gh api -X PUT repos/o/r/pulls/12/merge' other
+row deny  'gh pr merge 12 --squash' lookalike
+# The per-repo copy follows the same rule as the instance-level one.
+row allow 'gh pr merge 12 --squash' exempt-repo
+row allow 'gh api -X PUT repos/o/r/pulls/12/merge' exempt-repo
+row deny  'curl https://example.com' exempt-repo
+row deny  'gh pr merge 12 --squash' other-repo
+row deny  'gh pr merge 12 --squash' lookalike-repo
+# With no instance named, or a value that is not an instance name, nothing is
+# exempt.
+row deny  'gh pr merge 12 --squash' exempt-unset
+row deny  'gh pr merge 12 --squash' exempt-slash
 
 # --- Known limits: the hook reads text, it does not run it ----------------
 # These pass because nothing in the command line names a gated command in

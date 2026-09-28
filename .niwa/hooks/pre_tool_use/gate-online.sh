@@ -39,7 +39,40 @@
 #   ask:  gh auth switch, gh release create, gh issue close, unset GH_TOKEN,
 #         git push with --force, --force-with-lease, -f or a +refspec
 #
+# One instance may merge: the one named by GATE_MERGE_EXEMPT_INSTANCE. The
+# name is kept out of this repository; the private overlay sets the var and
+# workspace.toml promotes it into every instance's Claude settings, so each
+# hook sees the same value. There the three merge denials (gh pr merge, the
+# REST merge endpoint, the GraphQL merge mutations) are dropped; every other
+# rule still applies. niwa installs this script at
+# <instance>/.claude/hooks/pre_tool_use/gate-online.sh, and a copy in every
+# repo at <instance>/<group>/<repo>/.claude/hooks/pre_tool_use/
+# gate-online.local.sh. Each settings file runs its copy by that absolute
+# path, so $0 names the instance the session belongs to. Every instance gets
+# the same var; only the one whose own path matches it is exempt.
+#
+# The exemption keys on the reason strings rules() sets for those three
+# denials: "gh pr merge", "gh api merge mutation" and "gh api pull request
+# merge endpoint". Renaming one there means renaming it in the merge_exempt
+# line too, or that form of merge is denied again in the exempt instance.
+#
+# To remove the exemption, for instance once niwa enforces these rules itself:
+# delete the case block below and the merge_exempt line in rules(), drop
+# GATE_MERGE_EXEMPT_INSTANCE from workspace.toml, drop its value from the
+# overlay, and delete the exempt rows in the tests.
+#
 # Tests: tests/gate-online.test.sh at the repository root.
+
+MERGE_EXEMPT=0
+case "${GATE_MERGE_EXEMPT_INSTANCE:-}" in
+    "" | */*) ;;
+    *)
+        case "$0" in
+            */"$GATE_MERGE_EXEMPT_INSTANCE"/.claude/hooks/pre_tool_use/gate-online.sh) MERGE_EXEMPT=1 ;;
+            */"$GATE_MERGE_EXEMPT_INSTANCE"/*/.claude/hooks/pre_tool_use/gate-online.local.sh) MERGE_EXEMPT=1 ;;
+        esac
+        ;;
+esac
 
 INPUT=$(cat)
 COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
@@ -51,7 +84,7 @@ emit() {
         '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:$d,permissionDecisionReason:$r}}'
 }
 
-VERDICT=$(printf '%s' "$COMMAND" | LC_ALL=C awk '
+VERDICT=$(printf '%s' "$COMMAND" | LC_ALL=C awk -v merge_exempt="$MERGE_EXEMPT" '
 BEGIN { RS = "\001" }
 { src = (NR == 1) ? $0 : src "\001" $0 }
 
@@ -301,6 +334,7 @@ function rules(s, h, a, m,   x, k, sub1, sub2, get, t) {
                 else if (!get && x ~ /pulls\/[^\/]+\/merge([\/?]|$)/) { rd = "deny"; rr = "gh api pull request merge endpoint" }
             }
         }
+        if (merge_exempt && rr ~ /^gh (pr merge|api merge mutation|api pull request merge endpoint)$/) { rd = ""; rr = "" }
         return rd != ""
     }
     if (h == "niwa") {
