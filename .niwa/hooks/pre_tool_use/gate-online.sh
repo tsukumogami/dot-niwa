@@ -39,7 +39,20 @@
 #   ask:  gh auth switch, gh release create, gh issue close, unset GH_TOKEN,
 #         git push with --force, --force-with-lease, -f or a +refspec
 #
+# One instance may merge: tsuku+coordinator_session_owner-f05c1900 runs the
+# coordinator that lands pull requests while the owner is away. There the
+# three merge denials (gh pr merge, the REST merge endpoint, the GraphQL merge
+# mutations) are dropped; every other rule still applies. niwa installs this
+# script at <instance>/.claude/hooks/pre_tool_use/gate-online.sh and the
+# instance's own settings run it by that absolute path, so $0 names the
+# instance the session belongs to. A session elsewhere runs its own copy.
+#
 # Tests: tests/gate-online.test.sh at the repository root.
+
+MERGE_EXEMPT=0
+case "$0" in
+    */tsuku+coordinator_session_owner-f05c1900/.claude/hooks/pre_tool_use/gate-online.sh) MERGE_EXEMPT=1 ;;
+esac
 
 INPUT=$(cat)
 COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
@@ -51,7 +64,7 @@ emit() {
         '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:$d,permissionDecisionReason:$r}}'
 }
 
-VERDICT=$(printf '%s' "$COMMAND" | LC_ALL=C awk '
+VERDICT=$(printf '%s' "$COMMAND" | LC_ALL=C awk -v merge_exempt="$MERGE_EXEMPT" '
 BEGIN { RS = "\001" }
 { src = (NR == 1) ? $0 : src "\001" $0 }
 
@@ -301,6 +314,7 @@ function rules(s, h, a, m,   x, k, sub1, sub2, get, t) {
                 else if (!get && x ~ /pulls\/[^\/]+\/merge([\/?]|$)/) { rd = "deny"; rr = "gh api pull request merge endpoint" }
             }
         }
+        if (merge_exempt && rr ~ /^gh (pr merge|api merge mutation|api pull request merge endpoint)$/) { rd = ""; rr = "" }
         return rd != ""
     }
     if (h == "niwa") {

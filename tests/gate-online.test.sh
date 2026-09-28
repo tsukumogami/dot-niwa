@@ -35,11 +35,30 @@ trap 'rm -rf "$broken"' EXIT
 printf '#!/bin/sh\nexit 1\n' > "$broken/awk"
 chmod +x "$broken/awk"
 
-# decide COMMAND [broken-awk] -> prints deny|ask|allow, or error:<detail>
+# Copies of the hook where niwa installs it, under three instance names: the
+# one exempt from the merge rule, an ordinary one, and a name that only
+# starts with the exempt one.
+installed() {
+    local dir=$broken/$1/.claude/hooks/pre_tool_use
+    mkdir -p "$dir"
+    cp "$hook" "$dir/gate-online.sh"
+    echo "$dir/gate-online.sh"
+}
+exempt_hook=$(installed tsuku+coordinator_session_owner-f05c1900)
+other_hook=$(installed tsuku+some_worker-0123abcd)
+lookalike_hook=$(installed tsuku+coordinator_session_owner-f05c1900-copy)
+
+# decide COMMAND [broken-awk|exempt|other|lookalike]
+#   -> prints deny|ask|allow, or error:<detail>
 decide() {
-    local out status path=$PATH
-    [ "${2:-}" = broken-awk ] && path=$broken:$PATH
-    out=$(jq -n --arg c "$1" '{tool_name:"Bash",tool_input:{command:$c}}' | PATH=$path bash "$hook")
+    local out status path=$PATH run=$hook
+    case "${2:-}" in
+        broken-awk) path=$broken:$PATH ;;
+        exempt) run=$exempt_hook ;;
+        other) run=$other_hook ;;
+        lookalike) run=$lookalike_hook ;;
+    esac
+    out=$(jq -n --arg c "$1" '{tool_name:"Bash",tool_input:{command:$c}}' | PATH=$path bash "$run")
     status=$?
     if [ "$status" -ne 0 ]; then
         echo "error:exit-$status"
@@ -53,7 +72,7 @@ decide() {
         echo "error:bad-json"
 }
 
-# row EXPECTED COMMAND [broken-awk]
+# row EXPECTED COMMAND [broken-awk|exempt|other|lookalike]
 row() {
     local expected=$1 command=$2 got
     got=$(decide "$command" "${3:-}")
@@ -184,6 +203,24 @@ row allow $'cat <<EOF\nrun gh pr merge 12 by hand, in $HOME\nEOF'
 
 # --- The scanner itself fails: ask rather than allow ----------------------
 row ask   'git status' broken-awk
+
+# --- The one instance exempt from the merge rule ---------------------------
+# Merging is allowed there, in every form the merge rule denies.
+row allow 'gh pr merge 12 --squash' exempt
+row allow 'gh api -X PUT repos/o/r/pulls/12/merge' exempt
+row allow "gh api graphql -f query='mutation { mergePullRequest(input:{pullRequestId:\"x\"}) { clientMutationId } }'" exempt
+row allow 'cd repo && gh pr merge 12' exempt
+# Every other rule still applies there.
+row deny  'curl https://example.com' exempt
+row deny  'gh pr merge 12 && curl https://example.com' exempt
+row deny  'gh repo delete owner/repo --yes' exempt
+row deny  'niwa reap' exempt
+row ask   'gh issue close 5' exempt
+row ask   'git push --force origin main' exempt
+# Installed in any other instance, merging is still denied.
+row deny  'gh pr merge 12 --squash' other
+row deny  'gh api -X PUT repos/o/r/pulls/12/merge' other
+row deny  'gh pr merge 12 --squash' lookalike
 
 # --- Known limits: the hook reads text, it does not run it ----------------
 # These pass because nothing in the command line names a gated command in
