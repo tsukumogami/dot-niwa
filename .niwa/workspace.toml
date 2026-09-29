@@ -23,6 +23,9 @@ scripts = ["hooks/stop/workflow-continue.sh"]
 
 [claude.settings]
 permissions = "bypass"
+# No AI attribution in commits or pull requests: this turns off the session
+# trailer and session link Claude Code otherwise asks every session to add.
+attribution = "false"
 
 [claude.env]
 promote = ["GH_TOKEN", "GATE_MERGE_EXEMPT_INSTANCE"]
