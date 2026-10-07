@@ -28,7 +28,7 @@ permissions = "bypass"
 attribution = "false"
 
 [claude.env]
-promote = ["GH_TOKEN", "GATE_MERGE_EXEMPT_INSTANCE", "REVIEW_SHADOW_SITES"]
+promote = ["GH_TOKEN", "GATE_MERGE_EXEMPT_INSTANCE", "REVIEW_SHADOW_SITES", "DOCKER_HOST", "SHIRABE_FLOOR_REQUIRE_ROOTLESS"]
 
 # --- Environment ---
 
@@ -55,6 +55,8 @@ REVIEW_SHADOW_SITES = "1"
 
 [env.vars.optional]
 GATE_MERGE_EXEMPT_INSTANCE = "Name of the one instance whose sessions may merge pull requests despite the gate-online hook. Leave unset and merges are denied in every instance, which is the default."
+DOCKER_HOST = "Docker daemon socket every session talks to, for hosts that run a rootless daemon (unix:///run/user/<uid>/docker.sock). Leave unset and docker uses its own context or default socket, unchanged."
+SHIRABE_FLOOR_REQUIRE_ROOTLESS = "Set to 1 on hosts that allow rootless containers only: shirabe's check-bash-floor.sh then refuses a rootful daemon instead of printing a notice. Leave unset and a rootful daemon is allowed."
 
 # --- Files ---
 
