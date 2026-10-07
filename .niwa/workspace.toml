@@ -55,7 +55,7 @@ REVIEW_SHADOW_SITES = "1"
 
 # Promoted keys whose values are per host. Supply them from an overlay or your
 # personal niwa config, never from [env.vars] here: base values win over overlay
-# values per key, so a default here would silently replace a host's own.
+# values per key, so a default here would silently replace the overlay's.
 [env.vars.optional]
 GATE_MERGE_EXEMPT_INSTANCE = "Name of the one instance whose sessions may merge pull requests despite the gate-online hook. Leave unset and merges are denied in every instance, which is the default."
 DOCKER_HOST = "Docker daemon socket every session talks to, for hosts that run a rootless daemon (unix:///run/user/<uid>/docker.sock). Leave unset and docker uses its own context or default socket, unchanged."
