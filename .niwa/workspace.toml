@@ -28,7 +28,7 @@ permissions = "bypass"
 attribution = "false"
 
 [claude.env]
-promote = ["GH_TOKEN", "GATE_MERGE_EXEMPT_INSTANCE"]
+promote = ["GH_TOKEN", "GATE_MERGE_EXEMPT_INSTANCE", "REVIEW_SHADOW_SITES"]
 
 # --- Environment ---
 
@@ -48,6 +48,10 @@ ANTHROPIC_API_KEY  = "Anthropic API key. Only needed to run Claude Code against 
 TAVILY_API_KEY     = "Tavily search API key. Enables the Tavily provider for web search in research workflows; without it search falls back to DuckDuckGo."
 BRAVE_API_KEY      = "Brave search API key. Alternative web-search provider; same fallback applies when unset."
 TELEGRAM_BOT_TOKEN = "Telegram bot token. Enables workflow notifications to a Telegram channel; without it notifications are skipped."
+
+[env.vars]
+# Turns on shirabe's review-shadow sites, which ask the Jev decider for shadow review verdicts; only repos whose CLAUDE.md declares them public honour it.
+REVIEW_SHADOW_SITES = "1"
 
 [env.vars.optional]
 GATE_MERGE_EXEMPT_INSTANCE = "Name of the one instance whose sessions may merge pull requests despite the gate-online hook. Leave unset and merges are denied in every instance, which is the default."
