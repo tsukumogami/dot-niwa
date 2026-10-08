@@ -28,7 +28,7 @@ permissions = "bypass"
 attribution = "false"
 
 [claude.env]
-promote = ["GH_TOKEN", "GATE_MERGE_EXEMPT_INSTANCE", "REVIEW_SHADOW_SITES", "DOCKER_HOST", "SHIRABE_FLOOR_REQUIRE_ROOTLESS"]
+promote = ["GH_TOKEN", "GATE_MERGE_EXEMPT_INSTANCE", "REVIEW_SHADOW_SITES", "JEV_API_KEY", "DOCKER_HOST", "SHIRABE_FLOOR_REQUIRE_ROOTLESS"]
 
 # --- Environment ---
 
@@ -48,6 +48,7 @@ ANTHROPIC_API_KEY  = "Anthropic API key. Only needed to run Claude Code against 
 TAVILY_API_KEY     = "Tavily search API key. Enables the Tavily provider for web search in research workflows; without it search falls back to DuckDuckGo."
 BRAVE_API_KEY      = "Brave search API key. Alternative web-search provider; same fallback applies when unset."
 TELEGRAM_BOT_TOKEN = "Telegram bot token. Enables workflow notifications to a Telegram channel; without it notifications are skipped."
+JEV_API_KEY        = "API key for the Jev decider that shirabe's review-shadow sites ask for shadow verdicts (REVIEW_SHADOW_SITES in [env.vars] below). Supply it from an overlay or your personal niwa config. Without it the sites record no-key and send nothing; everything else is unaffected."
 
 [env.vars]
 # Turns on shirabe's review-shadow sites, which ask the Jev decider for shadow review verdicts; only repos whose CLAUDE.md declares them public honour it.
