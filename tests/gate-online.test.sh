@@ -74,6 +74,13 @@ decide() {
         lookalike-repo) run=$lookalike_repo_hook var=$exempt_name ;;
         exempt-unset) run=$exempt_hook ;;
         exempt-slash) run=$exempt_hook var=${broken##*/}/$exempt_name ;;
+        exempt-list) run=$exempt_hook var=ws+some_worker-0123abcd,$exempt_name ;;
+        other-list) run=$other_hook var=ws+some_worker-0123abcd,$exempt_name ;;
+        lookalike-list) run=$lookalike_hook var=ws+some_worker-0123abcd,$exempt_name ;;
+        exempt-list-repo) run=$exempt_repo_hook var=$exempt_name,ws+some_worker-0123abcd ;;
+        exempt-list-blanks) run=$exempt_hook var=,$exempt_name, ;;
+        exempt-list-slash) run=$exempt_hook var=${broken##*/}/$exempt_name,$exempt_name ;;
+        other-list-absent) run=$other_hook var=$exempt_name,ws+third_one-deadbeef ;;
     esac
     out=$(jq -n --arg c "$1" '{tool_name:"Bash",tool_input:{command:$c}}' |
         env -u GATE_MERGE_EXEMPT_INSTANCE ${var:+GATE_MERGE_EXEMPT_INSTANCE=$var} PATH="$path" bash "$run")
@@ -249,6 +256,19 @@ row deny  'gh pr merge 12 --squash' lookalike-repo
 # exempt.
 row deny  'gh pr merge 12 --squash' exempt-unset
 row deny  'gh pr merge 12 --squash' exempt-slash
+
+# --- A comma-separated list names one merging instance per host ----------
+# Both named instances may merge; a lookalike and an unnamed one may not;
+# empty entries and entries holding a slash are skipped, never matched.
+row allow 'gh pr merge 12 --squash' exempt-list
+row allow 'gh pr merge 12 --squash' other-list
+row allow 'gh api -X PUT repos/o/r/pulls/12/merge' exempt-list-repo
+row deny  'gh pr merge 12 --squash' lookalike-list
+row deny  'gh pr merge 12 --squash' other-list-absent
+row allow 'gh pr merge 12 --squash' exempt-list-blanks
+row allow 'gh pr merge 12 --squash' exempt-list-slash
+row deny  'curl https://example.com' exempt-list
+row deny  'niwa reap' other-list
 
 # --- Known limits: the hook reads text, it does not run it ----------------
 # These pass because nothing in the command line names a gated command in

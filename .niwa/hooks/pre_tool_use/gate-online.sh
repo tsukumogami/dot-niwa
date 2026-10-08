@@ -39,8 +39,9 @@
 #   ask:  gh auth switch, gh release create, gh issue close, unset GH_TOKEN,
 #         git push with --force, --force-with-lease, -f or a +refspec
 #
-# One instance may merge: the one named by GATE_MERGE_EXEMPT_INSTANCE. The
-# name is kept out of this repository; the private overlay sets the var and
+# The instances named by GATE_MERGE_EXEMPT_INSTANCE may merge: one name, or
+# several separated by commas, one merging coordinator per host. The names
+# are kept out of this repository; the private overlay sets the var and
 # workspace.toml promotes it into every instance's Claude settings, so each
 # hook sees the same value. There the three merge denials (gh pr merge, the
 # REST merge endpoint, the GraphQL merge mutations) are dropped; every other
@@ -64,15 +65,22 @@
 # Tests: tests/gate-online.test.sh at the repository root.
 
 MERGE_EXEMPT=0
-case "${GATE_MERGE_EXEMPT_INSTANCE:-}" in
-    "" | */*) ;;
-    *)
-        case "$0" in
-            */"$GATE_MERGE_EXEMPT_INSTANCE"/.claude/hooks/pre_tool_use/gate-online.sh) MERGE_EXEMPT=1 ;;
-            */"$GATE_MERGE_EXEMPT_INSTANCE"/*/.claude/hooks/pre_tool_use/gate-online.local.sh) MERGE_EXEMPT=1 ;;
-        esac
-        ;;
-esac
+# The var names one instance, or several separated by commas (one merging
+# coordinator per host). Each name is matched whole against this script's own
+# path; a name holding a slash or nothing is skipped, never matched.
+exempt_rest=${GATE_MERGE_EXEMPT_INSTANCE:-}
+while [ -n "$exempt_rest" ]; do
+    exempt_name=${exempt_rest%%,*}
+    if [ "$exempt_name" = "$exempt_rest" ]; then exempt_rest=; else exempt_rest=${exempt_rest#*,}; fi
+    case "$exempt_name" in
+        "" | */*) continue ;;
+    esac
+    case "$0" in
+        */"$exempt_name"/.claude/hooks/pre_tool_use/gate-online.sh) MERGE_EXEMPT=1 ;;
+        */"$exempt_name"/*/.claude/hooks/pre_tool_use/gate-online.local.sh) MERGE_EXEMPT=1 ;;
+    esac
+done
+unset exempt_rest exempt_name
 
 INPUT=$(cat)
 COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
