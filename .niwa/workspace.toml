@@ -73,19 +73,19 @@ SHIRABE_FLOOR_REQUIRE_ROOTLESS = "Set to 1 on hosts that allow rootless containe
 
 # --- Content ---
 
-[claude.content.workspace]
+[content.workspace]
 source = "workspace.md"
 
-[claude.content.groups.public]
+[content.groups.public]
 source = "public.md"
 
-[claude.content.repos.tsuku]
+[content.repos.tsuku]
 source = "repos/tsuku.md"
 
-  [claude.content.repos.tsuku.subdirs]
+  [content.repos.tsuku.subdirs]
   recipes = "repos/tsuku-subdirs/recipes.md"
   telemetry = "repos/tsuku-subdirs/telemetry.md"
   website = "repos/tsuku-subdirs/website.md"
 
-[claude.content.repos.koto]
+[content.repos.koto]
 source = "repos/koto.md"
