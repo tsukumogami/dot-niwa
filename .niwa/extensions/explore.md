@@ -14,10 +14,3 @@
 
 - **Private repos:** May reference competitors, internal discussions, and exploratory ideas
 - **Public repos:** Must not reference private issues or internal-only resources
-
-## Artifact Naming
-
-Use kebab-case topics for all wip/ artifacts:
-- `wip/explore_<topic>_scope.md`
-- `wip/explore_<topic>_findings.md`
-- `wip/research/explore_<topic>_r<N>_lead-<name>.md`
