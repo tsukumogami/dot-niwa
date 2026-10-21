@@ -1,6 +1,10 @@
 [workspace]
 name = "tsukumogami"
 content_dir = "claude"
+# A bare worktree name from an instance root (an Agent-tool subagent with
+# worktree isolation) lands in tsuku, the monorepo, instead of the first repo
+# by group and name. Needs niwa 0.35.0; older versions warn and ignore it.
+default_worktree_repo = "tsuku"
 
 [[sources]]
 org = "tsukumogami"
