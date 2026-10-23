@@ -12,6 +12,21 @@ org = "tsukumogami"
 [groups.public]
 visibility = "public"
 
+# --- Authority ---
+
+# What `niwa dispatch --grant` and `--role` may hand a worker. With no ceiling
+# nothing is grantable. cut-release stays out: a release cut stays a person's call.
+# A successor coordinator is dispatched with `--role coordinator` instead of
+# being named by instance. The grant is recorded, not enforced: the gate-online
+# hook still decides merges as before until it is written to read the grant.
+# `level` is left to niwa's default. Needs niwa 0.36.0; older versions warn
+# and ignore it.
+[authority]
+ceiling = ["merge-pr", "close-issue"]
+
+[authority.roles.coordinator]
+authorities = ["merge-pr", "close-issue"]
+
 # --- Claude ---
 
 [claude]
