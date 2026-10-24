@@ -17,10 +17,11 @@ visibility = "public"
 # What `niwa dispatch --grant` and `--role` may hand a worker. With no ceiling
 # nothing is grantable. cut-release stays out: a release cut stays a person's call.
 # A successor coordinator is dispatched with `--role coordinator` instead of
-# being named by instance. The grant is recorded, not enforced: the gate-online
-# hook still decides merges as before until it is written to read the grant.
-# `level` is left to niwa's default. Needs niwa 0.36.0; older versions warn
-# and ignore it.
+# being named by instance. The gate-online hook decides merges and closes for
+# a dispatched session by its grant, through `niwa authority check` (niwa
+# 0.38.0); every other session, and every session on a niwa without that
+# command, gets the hook's verdict from before the grant. `level` is left to
+# niwa's default. Needs niwa 0.36.0; older versions warn and ignore it.
 [authority]
 ceiling = ["merge-pr", "close-issue"]
 
@@ -76,7 +77,7 @@ REVIEW_SHADOW_SITES = "1"
 # personal niwa config, never from [env.vars] here: base values win over overlay
 # values per key, so a default here would silently replace the overlay's.
 [env.vars.optional]
-GATE_MERGE_EXEMPT_INSTANCE = "Names of the instances whose sessions may merge pull requests despite the gate-online hook: one name, or several separated by commas, one merging coordinator per host. Leave unset and merges are denied in every instance, which is the default."
+GATE_MERGE_EXEMPT_INSTANCE = "Names of the instances whose sessions may merge pull requests despite the gate-online hook: one name, or several separated by commas, one merging coordinator per host. With niwa 0.38.0 or later it applies only to sessions niwa didn't dispatch; a dispatched session merges by its grant. Leave unset and such sessions are denied merges in every instance, which is the default."
 DOCKER_HOST = "Docker daemon socket every session talks to, for hosts that run a rootless daemon (unix:///run/user/<uid>/docker.sock). Leave unset and docker uses its own context or default socket, unchanged."
 SHIRABE_FLOOR_REQUIRE_ROOTLESS = "Set to 1 on hosts that allow rootless containers only: shirabe's check-bash-floor.sh then refuses a rootful daemon instead of printing a notice. Leave unset and a rootful daemon is allowed."
 

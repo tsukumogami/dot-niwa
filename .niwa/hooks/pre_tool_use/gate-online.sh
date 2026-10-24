@@ -52,15 +52,51 @@
 # path, so $0 names the instance the session belongs to. Every instance gets
 # the same var; only the one whose own path matches it is exempt.
 #
-# The exemption keys on the reason strings rules() sets for those three
-# denials: "gh pr merge", "gh api merge mutation" and "gh api pull request
-# merge endpoint". Renaming one there means renaming it in the merge_exempt
-# line too, or that form of merge is denied again in the exempt instance.
+# The grant of a dispatched session
 #
-# To remove the exemption, for instance once niwa enforces these rules itself:
-# delete the case block below and the merge_exempt line in rules(), drop
-# GATE_MERGE_EXEMPT_INSTANCE from workspace.toml, drop its value from the
-# overlay, and delete the exempt rows in the tests.
+# Merging, closing an issue and creating a release each need a named
+# authority niwa can grant a session it dispatches: merge-pr, close-issue and
+# cut-release. For a command holding one of these (and only when nothing
+# else in it is already denied), the hook asks niwa once who the session is:
+#
+#   niwa authority check --json --session <payload session_id>
+#       -C <this script's directory> --point <authority>...
+#
+# and decides each needed authority by the answer:
+#
+#   bound, holds it, decider session, author exclusion off   allow
+#   bound, lacks merge-pr or close-issue                     deny
+#   bound, lacks cut-release                                 ask
+#   bound, holds it, decider dispatcher                      deny
+#   bound, holds it, decider person, or author exclusion on  as unlisted
+#   record-unusable                                          as unlisted
+#   not-dispatched, or the lookup failed                     as before
+#
+# "As unlisted" is the verdict an instance the exemption list doesn't name
+# gets: deny for a merge, ask for a close or a release. "As before" is the
+# verdict this hook gave without the lookup, exemption included, so the
+# exemption list now matters only to sessions niwa didn't dispatch. Every
+# other rule keeps its verdict for every session, and the final verdict is
+# the most restrictive of the two: a grant never lifts a deny or an ask that
+# came from anything else in the command. A command the scanner can't read
+# (text handed to a shell, a command name that is an expansion, an unclosed
+# quote) never takes a grant or the exemption, so $GH pr merge asks even in
+# a listed instance.
+#
+# The lookup failed when niwa isn't found (command -v niwa, then $NIWA_BIN
+# when it names an executable), when the payload carries no lowercase UUID
+# session id, when this script's path isn't absolute, when niwa exits
+# non-zero or runs past the bound, or when its answer isn't exactly one
+# niwa.authority.check/v1 document whose state, authorities, level, deciders
+# and author-exclusion values are all in niwa's vocabularies. The bound is 3
+# seconds, or NIWA_LOOKUP_SECONDS when that is 1 or 2, so the whole hook
+# finishes within 5 seconds even when niwa hangs. niwa's authority guide
+# ("A gate on the binding") is the contract this follows.
+#
+# To remove the exemption, for instance once every merging session is
+# dispatched with a grant: delete the case block below and the merge_exempt
+# test in gated(), drop GATE_MERGE_EXEMPT_INSTANCE from workspace.toml, drop
+# its value from the overlay, and delete the exempt rows in the tests.
 #
 # Tests: tests/gate-online.test.sh at the repository root.
 
@@ -313,22 +349,36 @@ function mentions(t) {
            t ~ /push[ \t]([^\n;&|]*[ \t])?(--force|-[A-Za-z]*f[A-Za-z]*([ \t\n;&|]|$)|\+)/
 }
 
+# Three verdicts are kept, each the most restrictive seen so far, first
+# reason wins a tie: today (every rule, the exemption applied to merges),
+# nonex (every rule, no exemption) and base (only the rules no grant covers).
 function verdict(d, r) {
-    if (rank[d] > rank[best]) { best = d; reason = r }
+    if (rank[d] > rank[today]) { today = d; todayr = r }
+    if (rank[d] > rank[nonex]) { nonex = d; nonexr = r }
+    if (rank[d] > rank[base])  { base = d;  baser = r }
+}
+
+# A rule a grant can decide, needing authority au.
+function gated(d, r, au) {
+    needs[au] = 1
+    if (rank[d] > rank[nonex]) { nonex = d; nonexr = r }
+    if (merge_exempt && au == "merge-pr") return
+    if (rank[d] > rank[today]) { today = d; todayr = r }
 }
 
 # Rules for command head h whose arguments are segw[s, a..m].
-# Sets rd and rr; returns 1 on a match.
+# Sets rd, rr and ra (the authority a grant would need, or ""); returns 1 on
+# a match.
 function rules(s, h, a, m,   x, k, sub1, sub2, get, t) {
-    rd = ""; rr = ""
+    rd = ""; rr = ""; ra = ""
     if (h ~ /^(curl|wget|nc|ncat|netcat)$/) { rd = "deny"; rr = h; return 1 }
     if (h == "gh") {
         sub1 = segw[s, a]; sub2 = segw[s, a + 1]
-        if (sub1 == "pr" && sub2 == "merge")        { rd = "deny"; rr = "gh pr merge" }
+        if (sub1 == "pr" && sub2 == "merge")        { rd = "deny"; rr = "gh pr merge"; ra = "merge-pr" }
         else if (sub1 == "repo" && sub2 == "delete") { rd = "deny"; rr = "gh repo delete" }
         else if (sub1 == "auth" && sub2 == "switch") { rd = "ask";  rr = "gh auth switch" }
-        else if (sub1 == "release" && sub2 == "create") { rd = "ask"; rr = "gh release create" }
-        else if (sub1 == "issue" && sub2 == "close") { rd = "ask";  rr = "gh issue close" }
+        else if (sub1 == "release" && sub2 == "create") { rd = "ask"; rr = "gh release create"; ra = "cut-release" }
+        else if (sub1 == "issue" && sub2 == "close") { rd = "ask";  rr = "gh issue close"; ra = "close-issue" }
         else if (sub1 == "api") {
             get = 0
             for (k = a + 1; k <= m; k++) {
@@ -338,11 +388,10 @@ function rules(s, h, a, m,   x, k, sub1, sub2, get, t) {
             }
             for (k = a + 1; k <= m; k++) {
                 x = segw[s, k]
-                if (x ~ /mergePullRequest|enablePullRequestAutoMerge/) { rd = "deny"; rr = "gh api merge mutation" }
-                else if (!get && x ~ /pulls\/[^\/]+\/merge([\/?]|$)/) { rd = "deny"; rr = "gh api pull request merge endpoint" }
+                if (x ~ /mergePullRequest|enablePullRequestAutoMerge/) { rd = "deny"; rr = "gh api merge mutation"; ra = "merge-pr" }
+                else if (!get && x ~ /pulls\/[^\/]+\/merge([\/?]|$)/) { rd = "deny"; rr = "gh api pull request merge endpoint"; ra = "merge-pr" }
             }
         }
-        if (merge_exempt && rr ~ /^gh (pr merge|api merge mutation|api pull request merge endpoint)$/) { rd = ""; rr = "" }
         return rd != ""
     }
     if (h == "niwa") {
@@ -421,38 +470,228 @@ function evalseg(s,   m, k, x, h, g) {
     h = x; sub(/.*\//, "", h)
     if (segd[s, k] && x ~ /\$/) {
         # The command name is an expansion: ask if a gated command would fit.
+        # No grant and no exemption reaches a command the scanner cannot read.
         split("gh niwa git", g, " ")
         for (x = 1; x <= 3; x++)
             if (rules(s, g[x], k + 1, m)) { verdict("ask", "command name is not literal; would be " rr); return }
         return
     }
-    if (rules(s, h, k + 1, m)) verdict(rd, rr)
+    if (rules(s, h, k + 1, m)) {
+        if (ra != "") gated(rd, rr, ra)
+        else verdict(rd, rr)
+    }
 }
+
+function field(v, empty) { return v == "" ? empty : v }
 
 END {
     rank[""] = 0; rank["ask"] = 1; rank["deny"] = 2
-    best = ""; reason = ""; ambiguous = ""
+    today = ""; todayr = ""; nonex = ""; nonexr = ""; base = ""; baser = ""
+    ambiguous = ""
     scan()
     for (s = 1; s <= nseg; s++) evalseg(s)
     if (ambiguous != "" && mentions(ambiguous))
         verdict("ask", "heredoc with command substitution mentions a gated command")
     if (unclosed && mentions(src))
         verdict("ask", "unclosed quote or substitution around a gated command")
-    if (best == "") print "allow"
-    else print best "\t" reason
+    # The authorities, in the order niwa lists them.
+    list = ""
+    split("merge-pr close-issue cut-release", order, " ")
+    for (k = 1; k <= 3; k++)
+        if (order[k] in needs) list = list (list == "" ? "" : ",") order[k]
+    # One line, tab-separated, no field empty: verdict and reason for today,
+    # nonex and base, then the needed authorities.
+    printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", field(today, "allow"), field(todayr, "-"),
+        field(nonex, "allow"), field(nonexr, "-"), field(base, "allow"), field(baser, "-"),
+        field(list, "-")
 }
 ')
 STATUS=$?
 
-if [ "$STATUS" -ne 0 ] || [ -z "$VERDICT" ]; then
+IFS='	' read -r TODAY TODAY_WHY NONEX NONEX_WHY BASE BASE_WHY NEEDS <<EOF
+$VERDICT
+EOF
+
+if [ "$STATUS" -ne 0 ] || [ -z "$NEEDS" ]; then
     emit ask "gate-online hook could not inspect the command"
     exit 0
 fi
 
-case "$VERDICT" in
-    deny*) emit deny "Blocked by gate-online hook: ${VERDICT#*	}" ;;
-    ask*)  emit ask "Online operation requires confirmation: ${VERDICT#*	}" ;;
+# decide VERDICT REASON: prints the decision; allow prints nothing.
+decide() {
+    case "$1" in
+        deny) emit deny "Blocked by gate-online hook: $2" ;;
+        ask)  emit ask "Online operation requires confirmation: $2" ;;
+    esac
+}
+
+# Nothing a grant decides, or something already denied that no grant lifts:
+# today's verdict, with no lookup.
+if [ "$NEEDS" = "-" ] || [ "$BASE" = "deny" ]; then
+    decide "$TODAY" "$TODAY_WHY"
+    exit 0
+fi
+
+# ---------------------------------------------------------------- the grant
+
+# lookup: runs niwa authority check for the needed authorities and prints
+# its validated answer, one value per line:
+#   bound, level, the authorities held ("none" when it holds none), then
+#   <authority>:<decider>:<author exclusion> for each needed authority
+# or only the state for record-unusable and not-dispatched. Returns non-zero
+# when the lookup failed, which leaves today's verdict.
+lookup() {
+    local niwa session anchor secs doc rc pid watcher answer
+    local uuid='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+
+    niwa=$(command -v niwa 2>/dev/null)
+    case "$niwa" in /*) ;; *) niwa= ;; esac
+    if [ -z "$niwa" ]; then
+        case "${NIWA_BIN:-}" in /*) ;; *) return 1 ;; esac
+        [ -f "$NIWA_BIN" ] && [ -x "$NIWA_BIN" ] || return 1
+        niwa=$NIWA_BIN
+    fi
+
+    session=$(printf '%s' "$INPUT" | jq -r '.session_id // empty' 2>/dev/null)
+    [[ "$session" =~ $uuid ]] || return 1
+
+    # The instance is the one this copy was installed into, never the
+    # payload's cwd.
+    anchor=${0%/*}
+    case "$anchor" in /*) ;; *) return 1 ;; esac
+
+    case "${NIWA_LOOKUP_SECONDS:-}" in
+        1 | 2) secs=$NIWA_LOOKUP_SECONDS ;;
+        *) secs=3 ;;
+    esac
+
+    # niwa writes to a file, not a pipe, so a killed lookup can't hold the
+    # hook open.
+    doc=$(mktemp "${TMPDIR:-/tmp}/gate-online.XXXXXX" 2>/dev/null) || return 1
+    # NEEDS holds only names from the list in END, so it splits safely.
+    set -- authority check --json --session "$session" -C "$anchor" --point ${NEEDS//,/ --point }
+    if command -v timeout >/dev/null 2>&1; then
+        timeout -s KILL "$secs" "$niwa" "$@" </dev/null >"$doc" 2>/dev/null
+        rc=$?
+    else
+        "$niwa" "$@" </dev/null >"$doc" 2>/dev/null &
+        pid=$!
+        (sleep "$secs"; kill -KILL "$pid") </dev/null >/dev/null 2>&1 &
+        watcher=$!
+        wait "$pid" 2>/dev/null
+        rc=$?
+        kill "$watcher" 2>/dev/null
+    fi
+    if [ "$rc" -ne 0 ]; then
+        rm -f "$doc"
+        return 1
+    fi
+
+    answer=$(jq -r -s --arg needs "$NEEDS" '
+        def oneof($set): . as $v | any($set[]; . == $v);
+        def authorities: ["merge-pr", "close-issue", "cut-release"];
+        if length != 1 then error("not one document") else .[0] end
+        | if type != "object" or .schema != "niwa.authority.check/v1" then error("schema") else . end
+        | if (.state | oneof(["bound", "record-unusable", "not-dispatched"])) then . else error("state") end
+        | if .state != "bound" then .state
+          else
+            (.grant | if type == "array" then map(.authority) else error("grant") end) as $held
+            | if ($held | all(.[]; oneof(authorities))) then . else error("authority") end
+            | if (.level | oneof(["autonomous", "supervised", "strict"])) then . else error("level") end
+            | (.points | if type == "array" then . else error("points") end) as $points
+            | if all($points[]; type == "object"
+                    and (.decider | oneof(["session", "dispatcher", "person"]))
+                    and (.author_exclusion | oneof(["on", "off"])))
+              then . else error("point") end
+            | "bound",
+              .level,
+              ([authorities[] | select(. as $a | $held | any(.[]; . == $a))]
+                | if length == 0 then "none" else join(",") end),
+              ($needs | split(",")[] as $a
+                | ([$points[] | select(.point == $a)] | .[0]) as $p
+                | if $p == null then error("point")
+                  else "\($a):\($p.decider):\($p.author_exclusion)" end)
+          end' "$doc" 2>/dev/null)
+    rc=$?
+    rm -f "$doc"
+    [ "$rc" -eq 0 ] && [ -n "$answer" ] || return 1
+    printf '%s\n' "$answer"
+}
+
+ANSWER=$(lookup) || ANSWER=
+STATE=${ANSWER%%
+*}
+
+case "$STATE" in
+    bound) ;;
+    record-unusable)
+        # The session is the dispatch's own, but its record can't be read:
+        # it gets what an instance off the exemption list gets.
+        decide "$NONEX" "$NONEX_WHY (the session's dispatch record can't be used)"
+        exit 0
+        ;;
+    *)
+        # not-dispatched, or the lookup failed.
+        decide "$TODAY" "$TODAY_WHY"
+        exit 0
+        ;;
 esac
 
-# Everything else: allow
+# Bound: start from the rules no grant covers, then add each needed
+# authority's verdict; the most restrictive wins, the first reason a tie.
+FINAL=$BASE
+FINAL_WHY=$BASE_WHY
+raise() {
+    local now new
+    case "$FINAL" in deny) now=2 ;; ask) now=1 ;; *) now=0 ;; esac
+    case "$1" in deny) new=2 ;; ask) new=1 ;; *) new=0 ;; esac
+    if [ "$new" -gt "$now" ]; then
+        FINAL=$1
+        FINAL_WHY=$2
+    fi
+}
+
+# unlisted AUTHORITY: what an instance off the exemption list gets.
+unlisted() {
+    case "$1" in merge-pr) echo deny ;; *) echo ask ;; esac
+}
+
+set -f
+OLD_IFS=$IFS
+IFS='
+'
+set -- $ANSWER
+IFS=$OLD_IFS
+set +f
+LEVEL=$2
+HELD=$3
+shift 3
+for POINT in "$@"; do
+    AUTHORITY=${POINT%%:*}
+    REST=${POINT#*:}
+    DECIDER=${REST%%:*}
+    EXCLUSION=${REST#*:}
+    case ",$HELD," in
+        *",$AUTHORITY,"*)
+            if [ "$DECIDER" = dispatcher ]; then
+                raise deny "session level $LEVEL; $AUTHORITY settled by dispatcher"
+            elif [ "$DECIDER" = person ]; then
+                raise "$(unlisted "$AUTHORITY")" "session level $LEVEL; $AUTHORITY settled by person"
+            elif [ "$EXCLUSION" = on ]; then
+                raise "$(unlisted "$AUTHORITY")" "author exclusion on for $AUTHORITY"
+            fi
+            ;;
+        *)
+            # A missing cut-release keeps today's ask; a missing merge-pr or
+            # close-issue is denied.
+            if [ "$AUTHORITY" = cut-release ]; then
+                raise ask "session holds $HELD; needs $AUTHORITY"
+            else
+                raise deny "session holds $HELD; needs $AUTHORITY"
+            fi
+            ;;
+    esac
+done
+
+decide "$FINAL" "$FINAL_WHY"
 exit 0
