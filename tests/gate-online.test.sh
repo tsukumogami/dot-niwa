@@ -654,7 +654,9 @@ grant ask   no-niwa listed '$GH pr merge 12'
 #   before.
 #   bound, the grant allowing all of NEEDS: BASE.
 #   bound, the grant allowing some: no more permissive than BASE, deny for a
-#   merge it doesn't allow, ask for a close or a release it doesn't allow.
+#   merge it doesn't allow, and at least ask for a close or a release it
+#   doesn't allow (a missing close-issue is denied, but a person decider
+#   asks; the rows above pin each exact verdict).
 compare_cmds=(
     '-|-|curl https://example.com'
     '-|-|wget https://example.com'

@@ -544,6 +544,9 @@ lookup() {
     local niwa session anchor secs doc rc pid watcher answer
     local uuid='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
 
+    # Only an absolute path counts: a relative NIWA_BIN would resolve
+    # against the session's working directory, and a name command -v
+    # returns without a slash is an alias or function, not a program.
     niwa=$(command -v niwa 2>/dev/null)
     case "$niwa" in /*) ;; *) niwa= ;; esac
     if [ -z "$niwa" ]; then
@@ -566,7 +569,8 @@ lookup() {
     esac
 
     # niwa writes to a file, not a pipe, so a killed lookup can't hold the
-    # hook open.
+    # hook open. The bound sends KILL, which nothing can ignore, so the
+    # hook never outlives it waiting on a niwa that traps TERM.
     doc=$(mktemp "${TMPDIR:-/tmp}/gate-online.XXXXXX" 2>/dev/null) || return 1
     # NEEDS holds only names from the list in END, so it splits safely.
     set -- authority check --json --session "$session" -C "$anchor" --point ${NEEDS//,/ --point }
@@ -587,6 +591,9 @@ lookup() {
         return 1
     fi
 
+    # Exactly one document, and every value in it from niwa's vocabularies,
+    # not only the needed points': an answer holding something unknown is
+    # from a niwa this hook doesn't understand, and none of it is trusted.
     answer=$(jq -r -s --arg needs "$NEEDS" '
         def oneof($set): . as $v | any($set[]; . == $v);
         def authorities: ["merge-pr", "close-issue", "cut-release"];
