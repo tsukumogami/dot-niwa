@@ -25,7 +25,9 @@ set -uo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 hook=${1:-$here/../.niwa/hooks/pre_tool_use/gate-online.sh}
-# The hook as it was before it read the grant, to compare verdicts against.
+# The hook as it was before it read the grant, to compare verdicts against:
+# a byte-for-byte copy of the hook at commit 2a98f60, kept here because CI
+# checks out one commit. Don't edit it.
 old_hook=$here/fixtures/gate-online-2a98f60.sh
 
 for f in "$hook" "$old_hook"; do
@@ -421,7 +423,15 @@ fixture() {
         sleep-no-timeout) FX=(PATH="$stub:$tools_nt" STUB_DOC="$all" STUB_SLEEP=30) ;;
         no-timeout) FX=(PATH="$stub:$tools_nt" STUB_DOC="$docs/bound-merge.json") ;;
         bad-session) FX=(PATH="$stub:$tools" STUB_DOC="$all") RUN_SESSION=not-a-uuid ;;
-        *) FX=(PATH="$stub:$tools" STUB_DOC="$docs/$1.json") ;;
+        *)
+            # A misspelt fixture would make the stub print nothing, which
+            # reads as a failed lookup and passes every today's-verdict row.
+            if [ ! -f "$docs/$1.json" ]; then
+                echo "no fixture document: $1" >&2
+                exit 1
+            fi
+            FX=(PATH="$stub:$tools" STUB_DOC="$docs/$1.json")
+            ;;
     esac
 }
 

@@ -8,7 +8,8 @@
 #   exit 0 with JSON decision → deny or ask per decision
 #   exit 2                    → hard block
 #
-# Requires: jq, awk
+# Requires: jq, awk, mktemp. niwa is optional: without it every session gets
+# the verdict it got before the grant. timeout is used when installed.
 #
 # How commands are found
 #
@@ -43,9 +44,10 @@
 # several separated by commas, one merging coordinator per host. The names
 # are kept out of this repository; the private overlay sets the var and
 # workspace.toml promotes it into every instance's Claude settings, so each
-# hook sees the same value. There the three merge denials (gh pr merge, the
-# REST merge endpoint, the GraphQL merge mutations) are dropped; every other
-# rule still applies. niwa installs this script at
+# hook sees the same value. There, for a session niwa didn't dispatch, the
+# three merge denials (gh pr merge, the REST merge endpoint, the GraphQL
+# merge mutations) are dropped when the command names them literally; every
+# other rule still applies. niwa installs this script at
 # <instance>/.claude/hooks/pre_tool_use/gate-online.sh, and a copy in every
 # repo at <instance>/<group>/<repo>/.claude/hooks/pre_tool_use/
 # gate-online.local.sh. Each settings file runs its copy by that absolute
@@ -91,7 +93,9 @@
 # and author-exclusion values are all in niwa's vocabularies. The bound is 3
 # seconds, or NIWA_LOOKUP_SECONDS when that is 1 or 2, so the whole hook
 # finishes within 5 seconds even when niwa hangs. niwa's authority guide
-# ("A gate on the binding") is the contract this follows.
+# ("A gate on the binding") is the contract this follows. Gating another
+# authority means touching rules() (ra), the order list in END, the jq
+# authorities list, unlisted() and the missing-authority branch.
 #
 # To remove the exemption, for instance once every merging session is
 # dispatched with a grant: delete the case block below and the merge_exempt
@@ -508,6 +512,9 @@ END {
 ')
 STATUS=$?
 
+# A tab is IFS whitespace, so read would merge an empty field into the next;
+# END prints a placeholder ("-", or "allow" for a verdict) instead of an
+# empty field. An empty NEEDS therefore means awk printed nothing at all.
 IFS='	' read -r TODAY TODAY_WHY NONEX NONEX_WHY BASE BASE_WHY NEEDS <<EOF
 $VERDICT
 EOF
@@ -663,6 +670,8 @@ unlisted() {
     case "$1" in merge-pr) echo deny ;; *) echo ask ;; esac
 }
 
+# lookup()'s answer, one value per line: $1 bound, $2 the level, $3 the
+# authorities held, then one <authority>:<decider>:<exclusion> per need.
 set -f
 OLD_IFS=$IFS
 IFS='
