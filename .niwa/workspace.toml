@@ -50,6 +50,28 @@ attribution = "false"
 [claude.env]
 promote = ["GH_TOKEN", "GATE_MERGE_EXEMPT_INSTANCE", "REVIEW_SHADOW_SITES", "JEV_API_KEY", "DOCKER_HOST", "SHIRABE_FLOOR_REQUIRE_ROOTLESS"]
 
+# --- Sessions ---
+
+# What `niwa dispatch` moves into and out of a worker's environment. The
+# dispatcher's koto anchor reaches the worker, so the worker's own anchor
+# records who dispatched it. The launching shell's KOTO_ANCHOR is dropped, so a
+# worker never writes as the session that launched it. Needs niwa 0.36.0.
+[session.dispatch_env]
+passthrough = ["KOTO_DISPATCHER_ANCHOR"]
+unset = ["KOTO_ANCHOR"]
+
+# Runs once for each session niwa reaps, in two steps. The first closes the
+# reaped session's koto anchor, and is skipped quietly when there's no reap
+# key, no koto, or a koto without `koto session anchor close`. The second
+# records the removal through the newest installed shirabe's coordinate skill,
+# when that script exists and belongs to this user, and never fails the reap.
+# The value is a TOML literal string, so the shell text is exactly what niwa
+# runs, with nothing escaped; tests/session-config.test.sh checks it byte for
+# byte. Needs niwa 0.36.0.
+[session.on_reap]
+command = '''[ -n "$NIWA_REAP_KEY" ] && command -v koto >/dev/null 2>&1 && koto session anchor close --help >/dev/null 2>&1 && koto session anchor close --key="$NIWA_REAP_KEY" --harness-session="$NIWA_SESSION_ID"; v=$(ls "$HOME/.claude/plugins/cache/shirabe/shirabe" 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -t. -k1,1n -k2,2n -k3,3n | tail -n 1); s="$HOME/.claude/plugins/cache/shirabe/shirabe/$v/skills/coordinate/scripts/unit-removed.sh"; [ -n "$v" ] && [ -O "$s" ] && [ -x "$s" ] && "$s" record >/dev/null 2>&1 || true'''
+timeout = "20s"
+
 # --- Environment ---
 
 [env]
