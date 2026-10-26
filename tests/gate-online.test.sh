@@ -245,6 +245,31 @@ row deny  'cd repo && gh api -X PUT repos/{owner}/{repo}/pulls/12/merge'
 row deny  "gh api graphql -f query='mutation { mergePullRequest(input: {pullRequestId: \"X\"}) { clientMutationId } }'"
 row allow 'gh api repos/owner/repo/pulls/12'
 row allow 'gh api -X GET repos/owner/repo/pulls/12/merge'
+# The method is the last -X or --method, in any spelling and case.
+row deny  'gh api repos/o/r/pulls/12/merge'
+row deny  'gh api -X GET -X PUT repos/o/r/pulls/12/merge'
+row deny  'gh api --method GET --method=PUT repos/o/r/pulls/12/merge'
+row deny  'gh api -XPOST repos/o/r/pulls/12/merge'
+row allow 'gh api -X PUT -X GET repos/o/r/pulls/12/merge'
+row allow 'gh api -XGET repos/o/r/pulls/12/merge'
+# A lowercase GET attached to its flag is a read, but the hook before this
+# reading denied it on the merge endpoint, and no verdict gets looser.
+row deny  'gh api -Xget repos/o/r/pulls/12/merge'
+row deny  'gh api --method=get repos/o/r/pulls/12/merge'
+row allow 'gh api --method get repos/o/r/pulls/12/merge'
+# The value of another flag is not a method.
+row deny  'gh api -X PUT repos/o/r/pulls/12/merge -q -XGET'
+row deny  'gh api -X PUT repos/o/r/pulls/12/merge --jq -XGET'
+
+# --- Subcommand words found past flags, as gh finds them ------------------
+row deny  'gh pr -R o/r merge 12'
+row deny  'gh pr --repo o/r merge 12'
+row deny  'gh pr --repo=o/r merge 12'
+row deny  'gh repo -R o/r delete --yes'
+row ask   'gh release -R o/r create v1'
+row ask   'gh issue -R o/r close 5'
+row allow 'gh pr -R o/r view 12'
+row allow 'gh release -R o/r view v1'
 
 # --- niwa reap, and the targeted destroy that stays allowed ---------------
 row deny  'niwa reap'
@@ -594,6 +619,11 @@ grant ask   not-dispatched listed 'gh issue close 34'
 grant ask   not-dispatched listed 'gh release create v1'
 grant ask   not-dispatched unlisted 'gh issue close 34'
 grant ask   not-dispatched unlisted 'gh release create v1'
+# Read as gh reads them; each was allowed before, and is stricter now.
+grant deny  not-dispatched unset 'gh pr -R o/r merge 12' 'gh pr merge'
+grant deny  not-dispatched unset 'gh api -X GET -X PUT repos/o/r/pulls/12/merge' 'merge endpoint'
+grant ask   not-dispatched unset 'gh release -R o/r create v1' 'gh release create'
+grant deny  not-dispatched unset 'gh api repos/o/r/pulls/12/merge' 'merge endpoint'
 
 # --- A failed lookup: today's verdict, though the stub would grant all ----
 # In an unlisted instance today's verdict is deny for a merge and ask for a
@@ -820,6 +850,344 @@ for name in "${compare_fixtures[@]}"; do
         "$([ "$bad" -eq 0 ] && echo ok || echo FAIL)" "$name" "${#compare_cmds[@]}" "$bad"
 done
 
+# =========================================== the release workflow dispatch
+#
+# gh workflow run naming a release workflow, or gh api on its dispatches
+# endpoint, needs cut-release and is decided by the grant as gh release
+# create is. A selector the hook can't read asks for every session. Rows
+# that run in a loop add what the loop runs beyond its one line to extra,
+# so the count at the end still holds.
+
+extra=0
+bound_doc bound-release autonomous cut-release session off
+bound_doc bound-dispatcher-off supervised merge-pr,close-issue,cut-release dispatcher off
+
+# --- A holder of cut-release dispatches the release workflow, any spelling
+release_dispatches=(
+    'gh workflow run prepare-release.yml'
+    'gh workflow run prepare-release.yml -f version=1.2.3 -f tag=v1.2.3 -f ref=main'
+    'gh workflow run --ref main prepare-release.yml'
+    'gh workflow run --ref main release-prepare.yml'
+    'gh workflow run -f version=1.2.3 prepare-release.yml'
+    'gh workflow run --json prepare-release.yml'
+    'gh workflow run release-prepare.yml -R o/r'
+    'gh workflow run prepare-release.yaml'
+    'gh workflow run release-prepare.yaml'
+    'gh workflow run "Prepare Release"'
+    'gh workflow run PREPARE-RELEASE.YML'
+    'gh workflow run PREPARE-RELEASE.YAML'
+    'gh workflow -R o/r run prepare-release.yml'
+    'gh api -X POST repos/o/r/actions/workflows/prepare-release.yml/dispatches -f ref=main'
+    'gh api --method=POST repos/o/r/actions/workflows/prepare-release.yml/dispatches'
+    'gh api repos/o/r/actions/workflows/prepare-release.yml/dispatches -f ref=main'
+    'gh api /repos/{owner}/{repo}/actions/workflows/release-prepare.yml/dispatches -f ref=main'
+    'gh api repos/{owner}/{repo}/actions/workflows/release-prepare.yml/dispatches?x=1'
+    'gh api repos/o/r/actions/workflows/prepare-release.yml/dispatches?x=1 -f ref=main'
+    'gh api --input body.json repos/o/r/actions/workflows/prepare-release.yml/dispatches'
+    'gh api -X GET -X POST repos/o/r/actions/workflows/prepare-release.yml/dispatches -f ref=main'
+    # The owner and repo, or all that comes before actions/workflows/, don't
+    # hide the workflow; the path is read in any case; and the value of
+    # another flag is not a method.
+    'gh api -X POST repos/$R/actions/workflows/prepare-release.yml/dispatches'
+    'gh api -X POST "repos/${R}/actions/workflows/prepare-release.yml/dispatches"'
+    'gh api -X POST "$BASE/actions/workflows/prepare-release.yml/dispatches"'
+    'gh api -X POST https://api.github.com/repos/o/r/actions/workflows/prepare-release.yml/dispatches'
+    'gh api -X POST repos/o/r/Actions/Workflows/prepare-release.yml/dispatches'
+    'gh api -X POST repos/o/r/actions/workflows/prepare-release.yml/dispatches -q -XGET'
+    'gh api -X POST repos/o/r/actions/workflows/prepare-release.yml/dispatches -H -XGET'
+)
+for c in "${release_dispatches[@]}"; do
+    for at in listed unlisted; do
+        grant allow bound-all "$at" "$c"
+    done
+done
+extra=$((extra + 2 * ${#release_dispatches[@]} - 1))
+
+# --- A bound session without cut-release is asked, listed or not --------
+for at in listed unlisted; do
+    for c in 'gh workflow run prepare-release.yml' \
+        'gh api -X GET -X POST repos/o/r/actions/workflows/prepare-release.yml/dispatches -f ref=main'; do
+        grant ask bound-merge-close "$at" "$c" 'holds merge-pr,close-issue' 'needs cut-release'
+    done
+    for c in 'gh workflow -R o/r run prepare-release.yml' \
+        'gh api repos/o/r/actions/workflows/prepare-release.yml/dispatches?x=1 -f ref=main' \
+        'gh api -X GET -X POST repos/o/r/actions/workflows/prepare-release.yml/dispatches -f ref=main'; do
+        grant ask bound-merge "$at" "$c" 'holds merge-pr' 'needs cut-release'
+    done
+done
+extra=$((extra + 2 * 2 - 1 + 2 * 3 - 1))
+# The merge-only coordinator prints exactly this.
+grant ask   bound-merge-close unset 'gh workflow run prepare-release.yml' \
+    'Online operation requires confirmation: session holds merge-pr,close-issue; needs cut-release'
+
+# --- Held, but the level or author exclusion hands the decision on --------
+for at in listed unlisted; do
+    grant deny bound-dispatcher-off "$at" 'gh workflow run prepare-release.yml' \
+        'level supervised' 'cut-release settled by dispatcher'
+    grant ask  bound-person "$at" 'gh workflow run prepare-release.yml' \
+        'level strict' 'cut-release settled by person'
+    grant ask  bound-exclusion "$at" 'gh workflow run prepare-release.yml' \
+        'author exclusion on for cut-release'
+    grant deny bound-dispatcher "$at" 'gh workflow run prepare-release.yml' \
+        'cut-release settled by dispatcher'
+done
+extra=$((extra + 4))
+
+# --- Not dispatched, record unusable, or a lookup that failed: ask --------
+for name in record-unusable not-dispatched no-niwa niwa-bin-missing exit-1 \
+    bad-schema two-docs bad-decider; do
+    for at in listed unlisted; do
+        grant ask "$name" "$at" 'gh workflow run prepare-release.yml' 'release workflow dispatch'
+    done
+done
+extra=$((extra + 8 * 2 - 1))
+timed 5 ask sleep 'gh workflow run prepare-release.yml'
+timed 5 ask sleep-no-timeout 'gh workflow run prepare-release.yml'
+
+# --- A grant never lifts what something else in the command earned -------
+grant deny  bound-all unset 'gh workflow run prepare-release.yml; curl x' 'curl'
+grant deny  bound-release unset 'gh workflow run prepare-release.yml; curl x' 'curl'
+grant deny  bound-release unset 'gh workflow run prepare-release.yml && gh pr merge 12' \
+    'holds cut-release' 'needs merge-pr'
+grant allow bound-release unset 'gh release create v1 && gh workflow run prepare-release.yml'
+
+# --- A selector or endpoint the hook can't read asks, grant or exemption --
+unreadable_dispatches=(
+    'gh workflow run 123456'
+    'gh workflow run'
+    'gh workflow run "$W"'
+    'gh workflow run "$(pick)"'
+    'gh workflow run prepare-releas[e].yml'
+    'gh workflow run prepare-release.y{ml,aml}'
+    'gh workflow run ~/prepare-release.yml'
+    'gh workflow run .github/workflows/prepare-release.yml'
+    'gh workflow run "prepare\-release.yml"'
+    'gh workflow run prepare-release.yml extra'
+    'gh workflow run ci.yml prepare-release.yml'
+    'gh workflow run -R o/r'
+    'gh api -X POST repos/o/r/actions/workflows/123456/dispatches'
+    'gh api -X POST "repos/o/r/actions/workflows/$W/dispatches"'
+    'gh api -X POST repos/o/r/actions/workflows/prepare%2Drelease.yml/dispatches'
+    'gh api repos/o/r/actions/workflows/ci.yml/dispatches repos/o/r/actions/workflows/1/dispatches'
+    'gh api "$EP" -X POST'
+    'gh api "$EP" -f ref=main'
+    'gh api --method=PUT "${EP}"'
+    'gh api -X POST "$(endpoint)"'
+    'gh api -X POST repos/o/r/actions/workflows/./prepare-release.yml/dispatches'
+    'gh api -X POST repos/o/r/actions/workflows/ci.yml/../prepare-release.yml/dispatches'
+    'gh api -X POST repos/o/r/actions/workflows/prepare-release.yml/./dispatches'
+    'gh api -X POST repos/$R/actions/workflows/$W/dispatches'
+)
+for c in "${unreadable_dispatches[@]}"; do
+    grant ask bound-all listed "$c" "can't be read"
+done
+extra=$((extra + ${#unreadable_dispatches[@]} - 1))
+grant ask   bound-all listed '$GH workflow run prepare-release.yml' 'command name is not literal'
+grant ask   not-dispatched listed '$GH workflow run 123456' 'command name is not literal'
+grant allow bound-all listed '$GH workflow run ci.yml'
+grant deny  bound-all listed 'gh api -X PUT repos/o/r/pulls/1/merge repos/o/r/actions/workflows/prepare-release.yml/dispatches' \
+    'names a merge and a workflow dispatch'
+
+# --- Other workflows, reads and text keep the verdict they had ------------
+grant allow not-dispatched unlisted 'gh workflow run ci.yml'
+grant allow not-dispatched unlisted 'gh workflow run "Build and Test"'
+grant allow not-dispatched unlisted 'gh workflow run prepare-releases.yml'
+grant allow bound-none unlisted 'gh api -X GET repos/o/r/actions/workflows/prepare-release.yml/dispatches'
+grant allow bound-none unlisted 'gh api "$EP"'
+grant allow bound-none unlisted 'gh api -X GET "$EP" -f per_page=100'
+grant ask   not-dispatched unlisted "bash -c 'gh workflow -R o/r run prepare-release.yml'" 'text handed to bash'
+grant allow not-dispatched unlisted "bash -c 'gh workflow run ci.yml'"
+
+# --- niwa runs once for a release dispatch, never for another workflow ---
+calls 1 bound-all 'gh workflow run prepare-release.yml' \
+    "authority check --json --session $session_id -C ${other_hook%/*} --point cut-release"
+calls 1 bound-all 'gh api -X POST repos/o/r/actions/workflows/prepare-release.yml/dispatches' \
+    "authority check --json --session $session_id -C ${other_hook%/*} --point cut-release"
+calls 1 bound-all 'gh workflow run prepare-release.yml && gh pr merge 12' \
+    "authority check --json --session $session_id -C ${other_hook%/*} --point merge-pr --point cut-release"
+calls 1 bound-all 'gh release create v1 && gh workflow run prepare-release.yml' \
+    "authority check --json --session $session_id -C ${other_hook%/*} --point cut-release"
+calls 0 bound-all 'gh workflow run ci.yml'
+calls 0 bound-all 'gh workflow run 123456'
+calls 0 bound-all 'git status'
+
+# --- The undispatched row flips with one edit -----------------------------
+# A copy of the hook with UNDISPATCHED_RELEASE_DISPATCH=allow gives a session
+# niwa didn't dispatch its old allow, and changes nothing else.
+flipped=$work/flipped-hook.sh
+sed 's/^UNDISPATCHED_RELEASE_DISPATCH=ask$/UNDISPATCHED_RELEASE_DISPATCH=allow/' "$hook" > "$flipped"
+if cmp -s "$hook" "$flipped"; then
+    report FAIL 'the hook sets UNDISPATCHED_RELEASE_DISPATCH=ask on a line of its own'
+else
+    report ok 'the hook sets UNDISPATCHED_RELEASE_DISPATCH=ask on a line of its own'
+fi
+flipped_hook=$(installed "flipped/$other_name" gate-online.sh "$flipped")
+for spec in 'allow|not-dispatched' 'allow|no-niwa' 'ask|record-unusable' 'ask|bound-merge-close' \
+    'allow|bound-all' 'deny|bound-dispatcher-off'; do
+    fixture "${spec#*|}"
+    got=$(run "$flipped_hook" 'gh workflow run prepare-release.yml' ${FX[@]+"${FX[@]}"})
+    report "$([ "${got%%	*}" = "${spec%%|*}" ] && echo ok || echo FAIL)" \
+        "$(printf 'flipped %-5s %-20s gh workflow run prepare-release.yml' "${spec%%|*}" "${spec#*|}")"
+done
+fixture not-dispatched
+got=$(run "$flipped_hook" 'gh workflow run 123456' ${FX[@]+"${FX[@]}"})
+report "$([ "${got%%	*}" = ask ] && echo ok || echo FAIL)" 'flipped ask   not-dispatched       gh workflow run 123456'
+extra=$((extra + 1 + 6 + 1))
+
+# --- Never more permissive than the hook it replaces ----------------------
+# Every command below runs through this hook and the one it replaces
+# (vendored at tests/fixtures/gate-online-179f588.sh) in the same instance,
+# under every fixture, listed and unlisted. MARK|COMMAND, where MARK says
+# how the two verdicts compare:
+#   =  the same everywhere
+#   >  never more permissive, and stricter somewhere (an expected change)
+# No command is marked looser: none may be.
+old179=$here/fixtures/gate-online-179f588.sh
+old179_listed=$(installed "old179/$exempt_name" gate-online.sh "$old179")
+old179_unlisted=$(installed "old179/$other_name" gate-online.sh "$old179")
+release_cmds=(
+    '=|gh workflow run ci.yml'
+    '=|gh workflow run "Build and Test"'
+    '=|gh workflow run prepare-releases.yml'
+    '=|gh workflow run release.yml'
+    '=|gh workflow list'
+    '=|gh workflow view prepare-release.yml'
+    '=|gh run list --workflow prepare-release.yml'
+    '=|gh api -X GET repos/o/r/actions/workflows/prepare-release.yml/dispatches'
+    '=|gh api -XGET repos/o/r/actions/workflows/prepare-release.yml/dispatches'
+    '=|gh api -X get repos/o/r/actions/workflows/prepare-release.yml/dispatches'
+    '=|gh api --method get repos/o/r/actions/workflows/prepare-release.yml/dispatches'
+    '=|gh api --method=get repos/o/r/actions/workflows/prepare-release.yml/dispatches'
+    '=|gh api repos/o/r/actions/workflows'
+    '=|gh api "repos/$R/pulls/$N"'
+    '=|gh api "$EP"'
+    '=|gh api -X GET "$EP" -f per_page=100'
+    "=|bash -c 'gh workflow run ci.yml'"
+    '=|echo "gh workflow run prepare-release.yml"'
+    '=|git commit -m "gh workflow run prepare-release.yml"'
+    '=|# gh workflow run prepare-release.yml'
+    $'=|cat <<\'EOF\'\ngh workflow run prepare-release.yml\nEOF'
+    '=|gh release create v1 --draft'
+    '=|gh release create v1'
+    '=|tsuku update koto'
+    '=|niwa apply'
+    '=|claude plugin marketplace update shirabe'
+    '=|gh workflow run prepare-release.yml; curl x'
+    '=|gh release create v1 && gh workflow run prepare-release.yml'
+    '=|gh api repos/o/r/pulls/12/merge'
+    '=|gh pr merge 12'
+    '=|gh api -X PUT repos/o/r/pulls/12/merge'
+    '=|gh issue close 34'
+    '=|$GH workflow run ci.yml'
+    '>|gh workflow run prepare-release.yml'
+    '>|gh workflow run prepare-release.yml -f version=1.2.3 -f tag=v1.2.3 -f ref=main'
+    '>|gh workflow run --ref main release-prepare.yml'
+    '>|gh workflow run -f version=1.2.3 prepare-release.yml'
+    '>|gh workflow run --json prepare-release.yml'
+    '>|gh workflow run "Prepare Release"'
+    '>|gh workflow run PREPARE-RELEASE.YAML'
+    '>|gh workflow -R o/r run prepare-release.yml'
+    '>|gh api -X POST repos/o/r/actions/workflows/prepare-release.yml/dispatches -f ref=main'
+    '>|gh api --method=POST repos/o/r/actions/workflows/prepare-release.yml/dispatches'
+    '>|gh api --input body.json repos/o/r/actions/workflows/prepare-release.yml/dispatches'
+    '>|gh api repos/{owner}/{repo}/actions/workflows/release-prepare.yml/dispatches?x=1'
+    '>|gh api -X GET -X POST repos/o/r/actions/workflows/prepare-release.yml/dispatches -f ref=main'
+    '>|gh workflow run prepare-release.yml && gh pr merge 12'
+    '>|gh workflow run 123456'
+    '>|gh workflow run'
+    '>|gh workflow run "$W"'
+    '>|gh workflow run prepare-releas[e].yml'
+    '>|gh workflow run prepare-release.y{ml,aml}'
+    '>|gh workflow run ~/prepare-release.yml'
+    '>|gh workflow run .github/workflows/prepare-release.yml'
+    '>|gh workflow run prepare-release.yml extra'
+    '>|gh api -X POST repos/o/r/actions/workflows/123456/dispatches'
+    '>|gh api -X POST repos/o/r/actions/workflows/prepare%2Drelease.yml/dispatches'
+    '>|gh api "$EP" -X POST'
+    ">|bash -c 'gh workflow -R o/r run prepare-release.yml'"
+    $'>|bash <<\'EOF\'\ngh workflow run prepare-release.yml\nEOF'
+    '>|echo "unclosed gh workflow run prepare-release.yml'
+    '>|$GH workflow run prepare-release.yml'
+    '>|gh pr -R o/r merge 12'
+    '>|gh release -R o/r create v1'
+    '>|gh api -X GET -X PUT repos/o/r/pulls/12/merge'
+    '>|gh api -X PUT repos/o/r/pulls/12/merge -q -XGET'
+    '>|gh api -X POST repos/$R/actions/workflows/prepare-release.yml/dispatches'
+    '>|gh api -X POST "$BASE/actions/workflows/prepare-release.yml/dispatches"'
+    '>|gh api -X POST repos/o/r/Actions/Workflows/prepare-release.yml/dispatches'
+    '>|gh api -X POST repos/o/r/actions/workflows/prepare-release.yml/dispatches -q -XGET'
+    '>|gh api -X POST repos/o/r/actions/workflows/./prepare-release.yml/dispatches'
+    '=|gh api -X POST repos/o/r/actions/workflows/ci.yml/dispatches'
+    '=|gh api -X GET repos/o/r/actions/workflows/./x/dispatches'
+    # Read as GET on the dispatches path, but held to the old deny on the
+    # merge endpoint, where the hook before this one denied them.
+    '=|gh api -Xget repos/o/r/pulls/12/merge'
+    '=|gh api --method=get repos/o/r/pulls/12/merge'
+    '=|gh api --method get repos/o/r/pulls/12/merge'
+)
+release_fixtures=(
+    bound-all bound-release bound-merge-close bound-merge bound-none
+    bound-dispatcher bound-dispatcher-off bound-person bound-exclusion
+    record-unusable not-dispatched no-niwa exit-1 bad-schema two-docs bad-decider
+)
+
+declare -a higher
+for i in "${!release_cmds[@]}"; do higher[$i]=0; done
+for name in "${release_fixtures[@]}"; do
+    bad=0
+    # run_at sets the fixture in a subshell; the old hook's run needs it here.
+    fixture "$name"
+    for at in listed unlisted; do
+        if [ "$at" = listed ]; then old=$old179_listed; else old=$old179_unlisted; fi
+        for i in "${!release_cmds[@]}"; do
+            mark=${release_cmds[$i]%%|*}
+            command=${release_cmds[$i]#*|}
+            got=$(run_at "$name" "$at" "$command")
+            got=${got%%	*}
+            before=$(run "$old" "$command" ${FX[@]+"${FX[@]}"} GATE_MERGE_EXEMPT_INSTANCE="$exempt_name")
+            before=${before%%	*}
+            new_rank=$(rank "$got")
+            old_rank=$(rank "$before")
+            [ "$new_rank" -gt "$old_rank" ] && higher[$i]=1
+            ok=1
+            if [ "$new_rank" -eq 9 ] || [ "$old_rank" -eq 9 ]; then ok=; fi
+            case "$mark" in
+                '=') [ "$new_rank" -eq "$old_rank" ] || ok= ;;
+                '>') [ "$new_rank" -ge "$old_rank" ] || ok= ;;
+            esac
+            if [ -n "$ok" ]; then
+                pass=$((pass + 1))
+            else
+                fail=$((fail + 1))
+                bad=$((bad + 1))
+                printf 'FAIL  vs 179f588 %-20s %-8s mark %s, was %s, got %s: %s\n' "$name" "$at" \
+                    "$mark" "$before" "$got" "$(printf '%q' "$command")"
+            fi
+        done
+    done
+    printf '%-5s vs 179f588 %-20s %d commands x 2 instances, %d off\n' \
+        "$([ "$bad" -eq 0 ] && echo ok || echo FAIL)" "$name" "${#release_cmds[@]}" "$bad"
+done
+# Each > row is stricter somewhere, or its mark is wrong; any mark but = and
+# > is wrong.
+for i in "${!release_cmds[@]}"; do
+    mark=${release_cmds[$i]%%|*}
+    command=${release_cmds[$i]#*|}
+    ok=1
+    case "$mark" in
+        '=') ;;
+        '>') [ "${higher[$i]}" = 1 ] || ok= ;;
+        *) ok= ;;
+    esac
+    if [ -n "$ok" ]; then
+        pass=$((pass + 1))
+    else
+        fail=$((fail + 1))
+        printf 'FAIL  vs 179f588 marked %s but never stricter, or not a mark: %s\n' "$mark" "$(printf '%q' "$command")"
+    fi
+done
+extra=$((extra + ${#release_fixtures[@]} * 2 * ${#release_cmds[@]} + ${#release_cmds[@]}))
+
 echo
 echo "$pass passed, $fail failed"
 
@@ -829,6 +1197,7 @@ echo "$pass passed, $fail failed"
 # runs once per fixture, instance and command.
 declared=$(grep -cE '^ *(row|grant|calls|timed) [a-z0-9]' "${BASH_SOURCE[0]}")
 expected=$((declared + 4 * (${#failures[@]} - 1) + ${#compare_fixtures[@]} * 2 * ${#compare_cmds[@]}))
+expected=$((expected + extra))
 if [ $((pass + fail)) -ne "$expected" ] || [ "$declared" -eq 0 ]; then
     echo "ran $((pass + fail)) rows, file declares $expected" >&2
     exit 1

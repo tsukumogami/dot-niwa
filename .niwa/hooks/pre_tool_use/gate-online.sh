@@ -21,7 +21,13 @@
 # quotes, which bash runs. Each simple command loses its leading VAR=value
 # words, shell keywords (if, then, do, !, {) and wrappers (command, env, exec,
 # sudo, nohup, time, timeout, nice, xargs, stdbuf, setsid), and its first
-# words are compared with the rules below.
+# words are compared with the rules below. A gh command's two subcommand
+# words are found the way gh finds them, past any flag before each and the
+# value of -R or --repo, so gh pr -R o/r merge 12 is a merge. A gh api
+# call's method is its last -X or --method in any spelling and case; only an
+# explicit GET makes an endpoint a read, and no method flag counts as a write.
+# On the merge endpoint a lowercase GET attached to its flag (-Xget,
+# --method=get) still doesn't count, as it didn't before this reading.
 #
 # This is text inspection, not a shell parser. It does not expand variables,
 # follow aliases or functions defined elsewhere, read script files, or see
@@ -31,14 +37,33 @@
 #     fed to a shell) that mentions a gated command;
 #   - a command name that is itself an expansion ($GH pr merge);
 #   - a quote, $( or backtick that never closes, around text that mentions a
-#     gated command.
+#     gated command;
+#   - a workflow dispatch whose workflow it can't read (below);
+#   - a gh api call whose endpoint is wholly an expansion ("$EP") and that
+#     carries a method other than GET or a body flag.
 #
 # Rules
 #   deny: gh pr merge, gh repo delete, gh api to pulls/<n>/merge or the
 #         GraphQL mergePullRequest / enablePullRequestAutoMerge mutations,
 #         curl, wget, nc, ncat, netcat, niwa reap
 #   ask:  gh auth switch, gh release create, gh issue close, unset GH_TOKEN,
-#         git push with --force, --force-with-lease, -f or a +refspec
+#         git push with --force, --force-with-lease, -f or a +refspec,
+#         a release workflow dispatch
+#
+# A release workflow dispatch is gh workflow run, or a gh api call other than
+# a GET to repos/<owner>/<repo>/actions/workflows/<selector>/dispatches,
+# whose selector is prepare-release.yml, prepare-release.yaml,
+# release-prepare.yml, release-prepare.yaml or "Prepare Release" in any case.
+# The selector of gh workflow run is the one word left once the flags, and
+# the values of -r, --ref, -R, --repo, -f, --raw-field, -F and --field, are
+# set aside. A selector that is missing, one of two or more such words,
+# digits only (a workflow id), an expansion, or holds any of
+# * ? [ ] { } ~ \ % / can't be read, and asks for every session. Any other
+# selector is not gated: CI and maintenance workflows dispatch freely. On
+# the gh api path, whatever comes before actions/workflows/ (a literal or
+# expanded owner and repo, {owner}/{repo}, a host) doesn't matter, the path
+# is read in any case, and a path that names workflows and dispatches in any
+# other shape (./, ../, extra segments) can't be read either.
 #
 # The instances named by GATE_MERGE_EXEMPT_INSTANCE may merge: one name, or
 # several separated by commas, one merging coordinator per host. The names
@@ -58,7 +83,8 @@
 #
 # Merging, closing an issue and creating a release each need a named
 # authority niwa can grant a session it dispatches: merge-pr, close-issue and
-# cut-release. For a command holding one of these (and only when nothing
+# cut-release, which covers a release workflow dispatch as well as gh release
+# create. For a command holding one of these (and only when nothing
 # else in it is already denied), the hook asks niwa once who the session is:
 #
 #   niwa authority check --json --session <payload session_id>
@@ -82,8 +108,13 @@
 # the most restrictive of the two: a grant never lifts a deny or an ask that
 # came from anything else in the command. A command the scanner can't read
 # (text handed to a shell, a command name that is an expansion, an unclosed
-# quote) never takes a grant or the exemption, so $GH pr merge asks even in
-# a listed instance.
+# quote, a workflow selector or gh api endpoint it can't read) never takes a
+# grant or the exemption, so $GH pr merge asks even in a listed instance.
+#
+# A release workflow dispatch gets these verdicts too, so before it a session
+# niwa didn't dispatch is asked, as it is before gh release create.
+# UNDISPATCHED_RELEASE_DISPATCH, set to allow, gives those sessions back the
+# verdict they had before this rule; nothing else changes with it.
 #
 # The lookup failed when niwa isn't found (command -v niwa, then $NIWA_BIN
 # when it names an executable), when the payload carries no lowercase UUID
@@ -95,7 +126,9 @@
 # finishes within 5 seconds even when niwa hangs. niwa's authority guide
 # ("A gate on the binding") is the contract this follows. Gating another
 # authority means touching rules() (ra), the order list in END, the jq
-# authorities list, unlisted() and the missing-authority branch.
+# authorities list, unlisted() and the missing-authority branch. Gating
+# another command under an existing authority needs only rules() and
+# mentions(), as the release workflow dispatch does under cut-release.
 #
 # To remove the exemption, for instance once every merging session is
 # dispatched with a grant: delete the case block below and the merge_exempt
@@ -103,6 +136,11 @@
 # its value from the overlay, and delete the exempt rows in the tests.
 #
 # Tests: tests/gate-online.test.sh at the repository root.
+
+# What a session niwa didn't dispatch (or whose lookup failed) gets for a
+# release workflow dispatch: ask, or allow for the verdict it had before the
+# release dispatch rule. Every other session state and rule is unaffected.
+UNDISPATCHED_RELEASE_DISPATCH=ask
 
 MERGE_EXEMPT=0
 # The var names one instance, or several separated by commas (one merging
@@ -132,7 +170,8 @@ emit() {
         '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:$d,permissionDecisionReason:$r}}'
 }
 
-VERDICT=$(printf '%s' "$COMMAND" | LC_ALL=C awk -v merge_exempt="$MERGE_EXEMPT" '
+VERDICT=$(printf '%s' "$COMMAND" | LC_ALL=C awk -v merge_exempt="$MERGE_EXEMPT" \
+    -v undispatched_release_dispatch="$UNDISPATCHED_RELEASE_DISPATCH" '
 BEGIN { RS = "\001" }
 { src = (NR == 1) ? $0 : src "\001" $0 }
 
@@ -349,6 +388,8 @@ function mentions(t) {
     return t ~ /gh[ \t\n]+(pr[ \t\n]+merge|repo[ \t\n]+delete|auth[ \t\n]+switch|release[ \t\n]+create|issue[ \t\n]+close)/ ||
            t ~ /pulls\/[^\/ \t\n]+\/merge|mergePullRequest|enablePullRequestAutoMerge/ ||
            t ~ /niwa[ \t\n]+reap|unset[ \t\n]+GH_TOKEN/ ||
+           tolower(t) ~ /prepare-release|release-prepare|prepare[ \t]+release/ ||
+           t ~ /actions\/workflows\/[^ \t\n]*\/dispatches/ ||
            t ~ /(^|[^A-Za-z0-9_.-])(curl|wget|nc|ncat|netcat)([ \t\n]|$)/ ||
            t ~ /push[ \t]([^\n;&|]*[ \t])?(--force|-[A-Za-z]*f[A-Za-z]*([ \t\n;&|]|$)|\+)/
 }
@@ -367,33 +408,145 @@ function gated(d, r, au) {
     needs[au] = 1
     if (rank[d] > rank[nonex]) { nonex = d; nonexr = r }
     if (merge_exempt && au == "merge-pr") return
+    if (undispatched_release_dispatch == "allow" && rrelease) return
     if (rank[d] > rank[today]) { today = d; todayr = r }
 }
 
+# The positions of the two subcommand words of a gh command in segw[s, a..m],
+# read as gh reads them: flags before either word are skipped, and so is the
+# value of -R or --repo given as its own word, so gh pr -R o/r merge is a
+# merge. Sets g1 and g2, each m + 1 when there is no such word.
+function ghsub(s, a, m,   k, found) {
+    g1 = m + 1; g2 = m + 1; found = 0
+    for (k = a; k <= m; k++) {
+        if (segw[s, k] ~ /^(-R|--repo)$/) { k++; continue }
+        if (segw[s, k] ~ /^-/) continue
+        if (++found == 1) g1 = k
+        else { g2 = k; return }
+    }
+}
+
+# The method of a gh api call whose arguments are segw[s, a..m]: the last
+# -X or --method in any spelling (-X GET, -XGET, --method GET,
+# --method=GET), upper-cased, or "" when none is given. Only an explicit GET
+# makes an endpoint a read; with no method flag gh may send a write.
+# Sets methold to 1 when the hook before this reading would also have taken
+# the last method for a GET: the value in its own word in any case, or
+# attached as exactly -XGET or --method=GET. The merge endpoint rule needs
+# both, so a lowercase -Xget, which that hook denied, is never allowed now.
+# The value of another flag that takes one (-q -XGET) is not a method.
+function ghmethod(s, a, m,   k, x, meth) {
+    meth = ""; methold = 0
+    for (k = a; k <= m; k++) {
+        x = segw[s, k]
+        if (x ~ /^(-f|-F|--raw-field|--field|--input|-H|--header|-q|--jq|-t|--template|--cache|-p|--preview|--hostname)$/) k++
+        else if (x ~ /^(-X|--method)$/) { meth = (k < m) ? segw[s, k + 1] : ""; methold = 1; k++ }
+        else if (x ~ /^--method=/) { meth = substr(x, 10); methold = (meth == "GET") }
+        else if (x ~ /^-X/) { meth = substr(x, 3); methold = (meth == "GET") }
+    }
+    return toupper(meth)
+}
+
+# A workflow selector that names a release workflow: the workflow every repo
+# in this workspace calls the shirabe reusable release workflow from. A repo
+# that names its release workflow otherwise adds the name here.
+function release_name(w) {
+    w = tolower(w)
+    return w == "prepare-release.yml" || w == "prepare-release.yaml" ||
+        w == "release-prepare.yml" || w == "release-prepare.yaml" ||
+        w == "prepare release"
+}
+
+# A workflow selector this hook cannot read: digits only (a workflow id), an
+# expansion, or a character bash would expand or GitHub would decode before
+# matching it (a glob, a brace, a tilde, a backslash, a percent sign, a slash).
+function unreadable(w, dyn,   cs, k) {
+    if (dyn || w ~ /\$/ || w ~ /^[0-9]+$/) return 1
+    cs = "*?[]{}~\\%/"
+    for (k = 1; k <= length(cs); k++) if (index(w, substr(cs, k, 1))) return 1
+    return 0
+}
+
+# Sets rd, rr and ra for a dispatch of the workflow named by selector w, and
+# rrelease to 1 when it is a release workflow dispatch.
+function dispatch(w, dyn) {
+    if (unreadable(w, dyn)) { rd = "ask"; rr = "workflow dispatch whose workflow can\047t be read"; ra = ""; rrelease = 0 }
+    else if (release_name(w)) { rd = "ask"; rr = "release workflow dispatch"; ra = "cut-release"; rrelease = 1 }
+}
+
 # Rules for command head h whose arguments are segw[s, a..m].
-# Sets rd, rr and ra (the authority a grant would need, or ""); returns 1 on
-# a match.
-function rules(s, h, a, m,   x, k, sub1, sub2, get, t) {
-    rd = ""; rr = ""; ra = ""
+# Sets rd, rr and ra (the authority a grant would need, or ""), and rrelease
+# for a release workflow dispatch; returns 1 on a match.
+function rules(s, h, a, m,   x, k, sub1, sub2, meth, t, n, w, wd, merge, ep, writes, lx) {
+    rd = ""; rr = ""; ra = ""; rrelease = 0
     if (h ~ /^(curl|wget|nc|ncat|netcat)$/) { rd = "deny"; rr = h; return 1 }
     if (h == "gh") {
-        sub1 = segw[s, a]; sub2 = segw[s, a + 1]
+        ghsub(s, a, m)
+        sub1 = (g1 <= m) ? segw[s, g1] : ""; sub2 = (g2 <= m) ? segw[s, g2] : ""
         if (sub1 == "pr" && sub2 == "merge")        { rd = "deny"; rr = "gh pr merge"; ra = "merge-pr" }
         else if (sub1 == "repo" && sub2 == "delete") { rd = "deny"; rr = "gh repo delete" }
         else if (sub1 == "auth" && sub2 == "switch") { rd = "ask";  rr = "gh auth switch" }
         else if (sub1 == "release" && sub2 == "create") { rd = "ask"; rr = "gh release create"; ra = "cut-release" }
         else if (sub1 == "issue" && sub2 == "close") { rd = "ask";  rr = "gh issue close"; ra = "close-issue" }
-        else if (sub1 == "api") {
-            get = 0
-            for (k = a + 1; k <= m; k++) {
+        else if (sub1 == "workflow" && sub2 == "run") {
+            # The selector is the one word left after the flags and the
+            # values of the flags that take one; none, or two or more, can
+            # not be read.
+            n = 0
+            for (k = g2 + 1; k <= m; k++) {
                 x = segw[s, k]
-                if (x ~ /^(-X|--method)$/ && toupper(segw[s, k + 1]) == "GET") get = 1
-                if (x ~ /^(-XGET|--method=GET)$/) get = 1
+                if (x ~ /^(-r|--ref|-R|--repo|-f|--raw-field|-F|--field)$/) { k++; continue }
+                if (x ~ /^-/) continue
+                n++; w = x; wd = segd[s, k]
             }
-            for (k = a + 1; k <= m; k++) {
+            if (n != 1) { rd = "ask"; rr = "workflow dispatch whose workflow can\047t be read" }
+            else dispatch(w, wd)
+        }
+        else if (sub1 == "api") {
+            meth = ghmethod(s, g1 + 1, m)
+            merge = ""
+            for (k = g1 + 1; k <= m; k++) {
                 x = segw[s, k]
-                if (x ~ /mergePullRequest|enablePullRequestAutoMerge/) { rd = "deny"; rr = "gh api merge mutation"; ra = "merge-pr" }
-                else if (!get && x ~ /pulls\/[^\/]+\/merge([\/?]|$)/) { rd = "deny"; rr = "gh api pull request merge endpoint"; ra = "merge-pr" }
+                if (x ~ /mergePullRequest|enablePullRequestAutoMerge/) merge = "gh api merge mutation"
+                else if (!(meth == "GET" && methold) && x ~ /pulls\/[^\/]+\/merge([\/?]|$)/) merge = "gh api pull request merge endpoint"
+                else if (meth != "GET" && !(rd == "ask" && ra == "") && tolower(x) ~ /workflows.*dispatches/) {
+                    lx = tolower(x)
+                    # Whatever comes before it (repos/o/r, {owner}, an
+                    # expansion, a host), the selector is the one segment
+                    # between actions/workflows/ and /dispatches; it is
+                    # compared in any case, as GitHub matches the path. A
+                    # path naming both in any other shape (./, ../, extra
+                    # segments) can not be read.
+                    if (match(lx, /(^|\/)actions\/workflows\/[^\/]+\/dispatches([\/?#]|$)/)) {
+                        w = substr(lx, RSTART, RLENGTH)
+                        sub(/.*actions\/workflows\//, "", w)
+                        sub(/\/dispatches.*/, "", w)
+                        # Only an expansion in the selector itself, which
+                        # leaves a $ in it, hides the workflow.
+                        dispatch(w, 0)
+                    } else dispatch("", 1)
+                }
+            }
+            if (merge != "" && rd != "") {
+                # A merge and a dispatch in one call: gh takes one endpoint,
+                # so this can not be read, and the merge keeps it denied.
+                rd = "deny"; rr = "gh api names a merge and a workflow dispatch"; ra = ""
+            } else if (merge != "") {
+                rd = "deny"; rr = merge; ra = "merge-pr"
+            } else if (rd == "" && meth != "GET") {
+                # An endpoint that is wholly an expansion can not be read: a
+                # call that may write through it asks.
+                writes = 0; ep = 0
+                for (k = g1 + 1; k <= m; k++) {
+                    x = segw[s, k]
+                    if (x ~ /^(-f|-F|--raw-field|--field|--input)$/ || x ~ /^(-[fF].|--raw-field=|--field=|--input=)/) writes = 1
+                    if (x ~ /^(-X|--method|-f|-F|--raw-field|--field|--input|-H|--header|-q|--jq|-t|--template|--cache|-p|--preview|--hostname)$/) { k++; continue }
+                    if (x ~ /^-/) continue
+                    if (!ep) ep = k
+                }
+                if (ep && segd[s, ep] && segw[s, ep] ~ /^\$(\{[^}]*\}|[A-Za-z_][A-Za-z0-9_]*|[0-9@*]|\(\.\.\.\))$/ && (meth != "" || writes)) {
+                    rd = "ask"; rr = "gh api write to an endpoint that can\047t be read"
+                }
             }
         }
         return rd != ""
