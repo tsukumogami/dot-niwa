@@ -252,8 +252,10 @@ row deny  'gh api --method GET --method=PUT repos/o/r/pulls/12/merge'
 row deny  'gh api -XPOST repos/o/r/pulls/12/merge'
 row allow 'gh api -X PUT -X GET repos/o/r/pulls/12/merge'
 row allow 'gh api -XGET repos/o/r/pulls/12/merge'
-row allow 'gh api -Xget repos/o/r/pulls/12/merge'
-row allow 'gh api --method=get repos/o/r/pulls/12/merge'
+# A lowercase GET attached to its flag is a read, but the hook before this
+# reading denied it on the merge endpoint, and no verdict gets looser.
+row deny  'gh api -Xget repos/o/r/pulls/12/merge'
+row deny  'gh api --method=get repos/o/r/pulls/12/merge'
 row allow 'gh api --method get repos/o/r/pulls/12/merge'
 
 # --- Subcommand words found past flags, as gh finds them ------------------
@@ -1022,8 +1024,7 @@ extra=$((extra + 1 + 6 + 1))
 # how the two verdicts compare:
 #   =  the same everywhere
 #   >  never more permissive, and stricter somewhere (an expected change)
-#   <  never stricter, and more permissive somewhere: only a lowercase GET
-#      to the merge endpoint, which is a read gh sends as one
+# No command is marked looser: none may be.
 old179=$here/fixtures/gate-online-179f588.sh
 old179_listed=$(installed "old179/$exempt_name" gate-online.sh "$old179")
 old179_unlisted=$(installed "old179/$other_name" gate-online.sh "$old179")
@@ -1093,8 +1094,11 @@ release_cmds=(
     '>|gh pr -R o/r merge 12'
     '>|gh release -R o/r create v1'
     '>|gh api -X GET -X PUT repos/o/r/pulls/12/merge'
-    '<|gh api -Xget repos/o/r/pulls/12/merge'
-    '<|gh api --method=get repos/o/r/pulls/12/merge'
+    # Read as GET on the dispatches path, but held to the old deny on the
+    # merge endpoint, where the hook before this one denied them.
+    '=|gh api -Xget repos/o/r/pulls/12/merge'
+    '=|gh api --method=get repos/o/r/pulls/12/merge'
+    '=|gh api --method get repos/o/r/pulls/12/merge'
 )
 release_fixtures=(
     bound-all bound-release bound-merge-close bound-merge bound-none
@@ -1102,8 +1106,8 @@ release_fixtures=(
     record-unusable not-dispatched no-niwa exit-1 bad-schema two-docs bad-decider
 )
 
-declare -a lower higher
-for i in "${!release_cmds[@]}"; do lower[$i]=0; higher[$i]=0; done
+declare -a higher
+for i in "${!release_cmds[@]}"; do higher[$i]=0; done
 for name in "${release_fixtures[@]}"; do
     bad=0
     # run_at sets the fixture in a subshell; the old hook's run needs it here.
@@ -1120,13 +1124,11 @@ for name in "${release_fixtures[@]}"; do
             new_rank=$(rank "$got")
             old_rank=$(rank "$before")
             [ "$new_rank" -gt "$old_rank" ] && higher[$i]=1
-            [ "$new_rank" -lt "$old_rank" ] && lower[$i]=1
             ok=1
             if [ "$new_rank" -eq 9 ] || [ "$old_rank" -eq 9 ]; then ok=; fi
             case "$mark" in
                 '=') [ "$new_rank" -eq "$old_rank" ] || ok= ;;
                 '>') [ "$new_rank" -ge "$old_rank" ] || ok= ;;
-                '<') [ "$new_rank" -le "$old_rank" ] || ok= ;;
             esac
             if [ -n "$ok" ]; then
                 pass=$((pass + 1))
@@ -1141,21 +1143,22 @@ for name in "${release_fixtures[@]}"; do
     printf '%-5s vs 179f588 %-20s %d commands x 2 instances, %d off\n' \
         "$([ "$bad" -eq 0 ] && echo ok || echo FAIL)" "$name" "${#release_cmds[@]}" "$bad"
 done
-# Each > row is stricter somewhere and each < row looser somewhere, or its
-# mark is wrong.
+# Each > row is stricter somewhere, or its mark is wrong; any mark but = and
+# > is wrong.
 for i in "${!release_cmds[@]}"; do
     mark=${release_cmds[$i]%%|*}
     command=${release_cmds[$i]#*|}
     ok=1
     case "$mark" in
+        '=') ;;
         '>') [ "${higher[$i]}" = 1 ] || ok= ;;
-        '<') [ "${lower[$i]}" = 1 ] || ok= ;;
+        *) ok= ;;
     esac
     if [ -n "$ok" ]; then
         pass=$((pass + 1))
     else
         fail=$((fail + 1))
-        printf 'FAIL  vs 179f588 marked %s but never differs that way: %s\n' "$mark" "$(printf '%q' "$command")"
+        printf 'FAIL  vs 179f588 marked %s but never stricter, or not a mark: %s\n' "$mark" "$(printf '%q' "$command")"
     fi
 done
 extra=$((extra + ${#release_fixtures[@]} * 2 * ${#release_cmds[@]} + ${#release_cmds[@]}))

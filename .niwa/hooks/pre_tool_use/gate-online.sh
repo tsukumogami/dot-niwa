@@ -26,6 +26,8 @@
 # value of -R or --repo, so gh pr -R o/r merge 12 is a merge. A gh api
 # call's method is its last -X or --method in any spelling and case; only an
 # explicit GET makes an endpoint a read, and no method flag counts as a write.
+# On the merge endpoint a lowercase GET attached to its flag (-Xget,
+# --method=get) still doesn't count, as it didn't before this reading.
 #
 # This is text inspection, not a shell parser. It does not expand variables,
 # follow aliases or functions defined elsewhere, read script files, or see
@@ -424,13 +426,17 @@ function ghsub(s, a, m,   k, found) {
 # -X or --method in any spelling (-X GET, -XGET, --method GET,
 # --method=GET), upper-cased, or "" when none is given. Only an explicit GET
 # makes an endpoint a read; with no method flag gh may send a write.
+# Sets methold to 1 when the hook before this reading would also have taken
+# the last method for a GET: the value in its own word in any case, or
+# attached as exactly -XGET or --method=GET. The merge endpoint rule needs
+# both, so a lowercase -Xget, which that hook denied, is never allowed now.
 function ghmethod(s, a, m,   k, x, meth) {
-    meth = ""
+    meth = ""; methold = 0
     for (k = a; k <= m; k++) {
         x = segw[s, k]
-        if (x ~ /^(-X|--method)$/) { meth = (k < m) ? segw[s, k + 1] : ""; k++ }
-        else if (x ~ /^--method=/) meth = substr(x, 10)
-        else if (x ~ /^-X/) meth = substr(x, 3)
+        if (x ~ /^(-X|--method)$/) { meth = (k < m) ? segw[s, k + 1] : ""; methold = 1; k++ }
+        else if (x ~ /^--method=/) { meth = substr(x, 10); methold = (meth == "GET") }
+        else if (x ~ /^-X/) { meth = substr(x, 3); methold = (meth == "GET") }
     }
     return toupper(meth)
 }
@@ -495,7 +501,7 @@ function rules(s, h, a, m,   x, k, sub1, sub2, meth, t, n, w, wd, merge, ep, wri
             for (k = g1 + 1; k <= m; k++) {
                 x = segw[s, k]
                 if (x ~ /mergePullRequest|enablePullRequestAutoMerge/) merge = "gh api merge mutation"
-                else if (meth != "GET" && x ~ /pulls\/[^\/]+\/merge([\/?]|$)/) merge = "gh api pull request merge endpoint"
+                else if (!(meth == "GET" && methold) && x ~ /pulls\/[^\/]+\/merge([\/?]|$)/) merge = "gh api pull request merge endpoint"
                 else if (meth != "GET" && !(rd == "ask" && ra == "") &&
                          match(x, /(^|\/)repos\/[^\/]+\/[^\/]+\/actions\/workflows\/[^\/]+\/dispatches([\/?#]|$)/)) {
                     # The selector is the part between workflows/ and
