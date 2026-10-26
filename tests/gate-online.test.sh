@@ -245,6 +245,26 @@ row deny  'cd repo && gh api -X PUT repos/{owner}/{repo}/pulls/12/merge'
 row deny  "gh api graphql -f query='mutation { mergePullRequest(input: {pullRequestId: \"X\"}) { clientMutationId } }'"
 row allow 'gh api repos/owner/repo/pulls/12'
 row allow 'gh api -X GET repos/owner/repo/pulls/12/merge'
+# The method is the last -X or --method, in any spelling and case.
+row deny  'gh api repos/o/r/pulls/12/merge'
+row deny  'gh api -X GET -X PUT repos/o/r/pulls/12/merge'
+row deny  'gh api --method GET --method=PUT repos/o/r/pulls/12/merge'
+row deny  'gh api -XPOST repos/o/r/pulls/12/merge'
+row allow 'gh api -X PUT -X GET repos/o/r/pulls/12/merge'
+row allow 'gh api -XGET repos/o/r/pulls/12/merge'
+row allow 'gh api -Xget repos/o/r/pulls/12/merge'
+row allow 'gh api --method=get repos/o/r/pulls/12/merge'
+row allow 'gh api --method get repos/o/r/pulls/12/merge'
+
+# --- Subcommand words found past flags, as gh finds them ------------------
+row deny  'gh pr -R o/r merge 12'
+row deny  'gh pr --repo o/r merge 12'
+row deny  'gh pr --repo=o/r merge 12'
+row deny  'gh repo -R o/r delete --yes'
+row ask   'gh release -R o/r create v1'
+row ask   'gh issue -R o/r close 5'
+row allow 'gh pr -R o/r view 12'
+row allow 'gh release -R o/r view v1'
 
 # --- niwa reap, and the targeted destroy that stays allowed ---------------
 row deny  'niwa reap'
@@ -594,6 +614,11 @@ grant ask   not-dispatched listed 'gh issue close 34'
 grant ask   not-dispatched listed 'gh release create v1'
 grant ask   not-dispatched unlisted 'gh issue close 34'
 grant ask   not-dispatched unlisted 'gh release create v1'
+# Read as gh reads them; each was allowed before, and is stricter now.
+grant deny  not-dispatched unset 'gh pr -R o/r merge 12' 'gh pr merge'
+grant deny  not-dispatched unset 'gh api -X GET -X PUT repos/o/r/pulls/12/merge' 'merge endpoint'
+grant ask   not-dispatched unset 'gh release -R o/r create v1' 'gh release create'
+grant deny  not-dispatched unset 'gh api repos/o/r/pulls/12/merge' 'merge endpoint'
 
 # --- A failed lookup: today's verdict, though the stub would grant all ----
 # In an unlisted instance today's verdict is deny for a merge and ask for a

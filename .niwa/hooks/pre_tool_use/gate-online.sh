@@ -21,7 +21,11 @@
 # quotes, which bash runs. Each simple command loses its leading VAR=value
 # words, shell keywords (if, then, do, !, {) and wrappers (command, env, exec,
 # sudo, nohup, time, timeout, nice, xargs, stdbuf, setsid), and its first
-# words are compared with the rules below.
+# words are compared with the rules below. A gh command's two subcommand
+# words are found the way gh finds them, past any flag before each and the
+# value of -R or --repo, so gh pr -R o/r merge 12 is a merge. A gh api
+# call's method is its last -X or --method in any spelling and case; only an
+# explicit GET makes an endpoint a read, and no method flag counts as a write.
 #
 # This is text inspection, not a shell parser. It does not expand variables,
 # follow aliases or functions defined elsewhere, read script files, or see
@@ -370,30 +374,55 @@ function gated(d, r, au) {
     if (rank[d] > rank[today]) { today = d; todayr = r }
 }
 
+# The positions of the two subcommand words of a gh command in segw[s, a..m],
+# read as gh reads them: flags before either word are skipped, and so is the
+# value of -R or --repo given as its own word, so gh pr -R o/r merge is a
+# merge. Sets g1 and g2, each m + 1 when there is no such word.
+function ghsub(s, a, m,   k, found) {
+    g1 = m + 1; g2 = m + 1; found = 0
+    for (k = a; k <= m; k++) {
+        if (segw[s, k] ~ /^(-R|--repo)$/) { k++; continue }
+        if (segw[s, k] ~ /^-/) continue
+        if (++found == 1) g1 = k
+        else { g2 = k; return }
+    }
+}
+
+# The method of a gh api call whose arguments are segw[s, a..m]: the last
+# -X or --method in any spelling (-X GET, -XGET, --method GET,
+# --method=GET), upper-cased, or "" when none is given. Only an explicit GET
+# makes an endpoint a read; with no method flag gh may send a write.
+function ghmethod(s, a, m,   k, x, meth) {
+    meth = ""
+    for (k = a; k <= m; k++) {
+        x = segw[s, k]
+        if (x ~ /^(-X|--method)$/) { meth = (k < m) ? segw[s, k + 1] : ""; k++ }
+        else if (x ~ /^--method=/) meth = substr(x, 10)
+        else if (x ~ /^-X/) meth = substr(x, 3)
+    }
+    return toupper(meth)
+}
+
 # Rules for command head h whose arguments are segw[s, a..m].
 # Sets rd, rr and ra (the authority a grant would need, or ""); returns 1 on
 # a match.
-function rules(s, h, a, m,   x, k, sub1, sub2, get, t) {
+function rules(s, h, a, m,   x, k, sub1, sub2, meth, t) {
     rd = ""; rr = ""; ra = ""
     if (h ~ /^(curl|wget|nc|ncat|netcat)$/) { rd = "deny"; rr = h; return 1 }
     if (h == "gh") {
-        sub1 = segw[s, a]; sub2 = segw[s, a + 1]
+        ghsub(s, a, m)
+        sub1 = (g1 <= m) ? segw[s, g1] : ""; sub2 = (g2 <= m) ? segw[s, g2] : ""
         if (sub1 == "pr" && sub2 == "merge")        { rd = "deny"; rr = "gh pr merge"; ra = "merge-pr" }
         else if (sub1 == "repo" && sub2 == "delete") { rd = "deny"; rr = "gh repo delete" }
         else if (sub1 == "auth" && sub2 == "switch") { rd = "ask";  rr = "gh auth switch" }
         else if (sub1 == "release" && sub2 == "create") { rd = "ask"; rr = "gh release create"; ra = "cut-release" }
         else if (sub1 == "issue" && sub2 == "close") { rd = "ask";  rr = "gh issue close"; ra = "close-issue" }
         else if (sub1 == "api") {
-            get = 0
-            for (k = a + 1; k <= m; k++) {
-                x = segw[s, k]
-                if (x ~ /^(-X|--method)$/ && toupper(segw[s, k + 1]) == "GET") get = 1
-                if (x ~ /^(-XGET|--method=GET)$/) get = 1
-            }
-            for (k = a + 1; k <= m; k++) {
+            meth = ghmethod(s, g1 + 1, m)
+            for (k = g1 + 1; k <= m; k++) {
                 x = segw[s, k]
                 if (x ~ /mergePullRequest|enablePullRequestAutoMerge/) { rd = "deny"; rr = "gh api merge mutation"; ra = "merge-pr" }
-                else if (!get && x ~ /pulls\/[^\/]+\/merge([\/?]|$)/) { rd = "deny"; rr = "gh api pull request merge endpoint"; ra = "merge-pr" }
+                else if (meth != "GET" && x ~ /pulls\/[^\/]+\/merge([\/?]|$)/) { rd = "deny"; rr = "gh api pull request merge endpoint"; ra = "merge-pr" }
             }
         }
         return rd != ""
