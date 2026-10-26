@@ -30,3 +30,20 @@ jobs:
           awk --version 2>&1 | head -1
       - name: Run gate-online case table
         run: bash tests/gate-online.test.sh
+
+  # The on-reap command is shell text inside TOML: this parses it and checks it
+  # byte for byte, then runs it under each OS's sh against stubs.
+  session-config:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Show tool versions
+        run: |
+          python3 --version
+          ls -lL /bin/sh
+      - name: Run session config checks
+        run: bash tests/session-config.test.sh
