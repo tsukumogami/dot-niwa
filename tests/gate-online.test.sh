@@ -257,6 +257,9 @@ row allow 'gh api -XGET repos/o/r/pulls/12/merge'
 row deny  'gh api -Xget repos/o/r/pulls/12/merge'
 row deny  'gh api --method=get repos/o/r/pulls/12/merge'
 row allow 'gh api --method get repos/o/r/pulls/12/merge'
+# The value of another flag is not a method.
+row deny  'gh api -X PUT repos/o/r/pulls/12/merge -q -XGET'
+row deny  'gh api -X PUT repos/o/r/pulls/12/merge --jq -XGET'
 
 # --- Subcommand words found past flags, as gh finds them ------------------
 row deny  'gh pr -R o/r merge 12'
@@ -882,6 +885,16 @@ release_dispatches=(
     'gh api repos/o/r/actions/workflows/prepare-release.yml/dispatches?x=1 -f ref=main'
     'gh api --input body.json repos/o/r/actions/workflows/prepare-release.yml/dispatches'
     'gh api -X GET -X POST repos/o/r/actions/workflows/prepare-release.yml/dispatches -f ref=main'
+    # The owner and repo, or all that comes before actions/workflows/, don't
+    # hide the workflow; the path is read in any case; and the value of
+    # another flag is not a method.
+    'gh api -X POST repos/$R/actions/workflows/prepare-release.yml/dispatches'
+    'gh api -X POST "repos/${R}/actions/workflows/prepare-release.yml/dispatches"'
+    'gh api -X POST "$BASE/actions/workflows/prepare-release.yml/dispatches"'
+    'gh api -X POST https://api.github.com/repos/o/r/actions/workflows/prepare-release.yml/dispatches'
+    'gh api -X POST repos/o/r/Actions/Workflows/prepare-release.yml/dispatches'
+    'gh api -X POST repos/o/r/actions/workflows/prepare-release.yml/dispatches -q -XGET'
+    'gh api -X POST repos/o/r/actions/workflows/prepare-release.yml/dispatches -H -XGET'
 )
 for c in "${release_dispatches[@]}"; do
     for at in listed unlisted; do
@@ -960,6 +973,10 @@ unreadable_dispatches=(
     'gh api "$EP" -f ref=main'
     'gh api --method=PUT "${EP}"'
     'gh api -X POST "$(endpoint)"'
+    'gh api -X POST repos/o/r/actions/workflows/./prepare-release.yml/dispatches'
+    'gh api -X POST repos/o/r/actions/workflows/ci.yml/../prepare-release.yml/dispatches'
+    'gh api -X POST repos/o/r/actions/workflows/prepare-release.yml/./dispatches'
+    'gh api -X POST repos/$R/actions/workflows/$W/dispatches'
 )
 for c in "${unreadable_dispatches[@]}"; do
     grant ask bound-all listed "$c" "can't be read"
@@ -1094,6 +1111,14 @@ release_cmds=(
     '>|gh pr -R o/r merge 12'
     '>|gh release -R o/r create v1'
     '>|gh api -X GET -X PUT repos/o/r/pulls/12/merge'
+    '>|gh api -X PUT repos/o/r/pulls/12/merge -q -XGET'
+    '>|gh api -X POST repos/$R/actions/workflows/prepare-release.yml/dispatches'
+    '>|gh api -X POST "$BASE/actions/workflows/prepare-release.yml/dispatches"'
+    '>|gh api -X POST repos/o/r/Actions/Workflows/prepare-release.yml/dispatches'
+    '>|gh api -X POST repos/o/r/actions/workflows/prepare-release.yml/dispatches -q -XGET'
+    '>|gh api -X POST repos/o/r/actions/workflows/./prepare-release.yml/dispatches'
+    '=|gh api -X POST repos/o/r/actions/workflows/ci.yml/dispatches'
+    '=|gh api -X GET repos/o/r/actions/workflows/./x/dispatches'
     # Read as GET on the dispatches path, but held to the old deny on the
     # merge endpoint, where the hook before this one denied them.
     '=|gh api -Xget repos/o/r/pulls/12/merge'

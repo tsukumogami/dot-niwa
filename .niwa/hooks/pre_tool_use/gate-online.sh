@@ -59,7 +59,11 @@
 # set aside. A selector that is missing, one of two or more such words,
 # digits only (a workflow id), an expansion, or holds any of
 # * ? [ ] { } ~ \ % / can't be read, and asks for every session. Any other
-# selector is not gated: CI and maintenance workflows dispatch freely.
+# selector is not gated: CI and maintenance workflows dispatch freely. On
+# the gh api path, whatever comes before actions/workflows/ (a literal or
+# expanded owner and repo, {owner}/{repo}, a host) doesn't matter, the path
+# is read in any case, and a path that names workflows and dispatches in any
+# other shape (./, ../, extra segments) can't be read either.
 #
 # The instances named by GATE_MERGE_EXEMPT_INSTANCE may merge: one name, or
 # several separated by commas, one merging coordinator per host. The names
@@ -404,7 +408,7 @@ function gated(d, r, au) {
     needs[au] = 1
     if (rank[d] > rank[nonex]) { nonex = d; nonexr = r }
     if (merge_exempt && au == "merge-pr") return
-    if (undispatched_release_dispatch == "allow" && r == "release workflow dispatch") return
+    if (undispatched_release_dispatch == "allow" && rrelease) return
     if (rank[d] > rank[today]) { today = d; todayr = r }
 }
 
@@ -430,11 +434,13 @@ function ghsub(s, a, m,   k, found) {
 # the last method for a GET: the value in its own word in any case, or
 # attached as exactly -XGET or --method=GET. The merge endpoint rule needs
 # both, so a lowercase -Xget, which that hook denied, is never allowed now.
+# The value of another flag that takes one (-q -XGET) is not a method.
 function ghmethod(s, a, m,   k, x, meth) {
     meth = ""; methold = 0
     for (k = a; k <= m; k++) {
         x = segw[s, k]
-        if (x ~ /^(-X|--method)$/) { meth = (k < m) ? segw[s, k + 1] : ""; methold = 1; k++ }
+        if (x ~ /^(-f|-F|--raw-field|--field|--input|-H|--header|-q|--jq|-t|--template|--cache|-p|--preview|--hostname)$/) k++
+        else if (x ~ /^(-X|--method)$/) { meth = (k < m) ? segw[s, k + 1] : ""; methold = 1; k++ }
         else if (x ~ /^--method=/) { meth = substr(x, 10); methold = (meth == "GET") }
         else if (x ~ /^-X/) { meth = substr(x, 3); methold = (meth == "GET") }
     }
@@ -461,17 +467,18 @@ function unreadable(w, dyn,   cs, k) {
     return 0
 }
 
-# Sets rd, rr and ra for a dispatch of the workflow named by selector w.
+# Sets rd, rr and ra for a dispatch of the workflow named by selector w, and
+# rrelease to 1 when it is a release workflow dispatch.
 function dispatch(w, dyn) {
-    if (unreadable(w, dyn)) { rd = "ask"; rr = "workflow dispatch whose workflow can\047t be read"; ra = "" }
-    else if (release_name(w)) { rd = "ask"; rr = "release workflow dispatch"; ra = "cut-release" }
+    if (unreadable(w, dyn)) { rd = "ask"; rr = "workflow dispatch whose workflow can\047t be read"; ra = ""; rrelease = 0 }
+    else if (release_name(w)) { rd = "ask"; rr = "release workflow dispatch"; ra = "cut-release"; rrelease = 1 }
 }
 
 # Rules for command head h whose arguments are segw[s, a..m].
-# Sets rd, rr and ra (the authority a grant would need, or ""); returns 1 on
-# a match.
-function rules(s, h, a, m,   x, k, sub1, sub2, meth, t, n, w, wd, merge, ep, writes) {
-    rd = ""; rr = ""; ra = ""
+# Sets rd, rr and ra (the authority a grant would need, or ""), and rrelease
+# for a release workflow dispatch; returns 1 on a match.
+function rules(s, h, a, m,   x, k, sub1, sub2, meth, t, n, w, wd, merge, ep, writes, lx) {
+    rd = ""; rr = ""; ra = ""; rrelease = 0
     if (h ~ /^(curl|wget|nc|ncat|netcat)$/) { rd = "deny"; rr = h; return 1 }
     if (h == "gh") {
         ghsub(s, a, m)
@@ -502,15 +509,22 @@ function rules(s, h, a, m,   x, k, sub1, sub2, meth, t, n, w, wd, merge, ep, wri
                 x = segw[s, k]
                 if (x ~ /mergePullRequest|enablePullRequestAutoMerge/) merge = "gh api merge mutation"
                 else if (!(meth == "GET" && methold) && x ~ /pulls\/[^\/]+\/merge([\/?]|$)/) merge = "gh api pull request merge endpoint"
-                else if (meth != "GET" && !(rd == "ask" && ra == "") &&
-                         match(x, /(^|\/)repos\/[^\/]+\/[^\/]+\/actions\/workflows\/[^\/]+\/dispatches([\/?#]|$)/)) {
-                    # The selector is the part between workflows/ and
-                    # /dispatches; neither it nor the owner and repo
-                    # before it hold a slash.
-                    w = substr(x, RSTART, RLENGTH)
-                    sub(/.*\/actions\/workflows\//, "", w)
-                    sub(/\/dispatches.*/, "", w)
-                    dispatch(w, segd[s, k])
+                else if (meth != "GET" && !(rd == "ask" && ra == "") && tolower(x) ~ /workflows.*dispatches/) {
+                    lx = tolower(x)
+                    # Whatever comes before it (repos/o/r, {owner}, an
+                    # expansion, a host), the selector is the one segment
+                    # between actions/workflows/ and /dispatches; it is
+                    # compared in any case, as GitHub matches the path. A
+                    # path naming both in any other shape (./, ../, extra
+                    # segments) can not be read.
+                    if (match(lx, /(^|\/)actions\/workflows\/[^\/]+\/dispatches([\/?#]|$)/)) {
+                        w = substr(lx, RSTART, RLENGTH)
+                        sub(/.*actions\/workflows\//, "", w)
+                        sub(/\/dispatches.*/, "", w)
+                        # Only an expansion in the selector itself, which
+                        # leaves a $ in it, hides the workflow.
+                        dispatch(w, 0)
+                    } else dispatch("", 1)
                 }
             }
             if (merge != "" && rd != "") {
