@@ -96,13 +96,15 @@
 #   bound, lacks it                                          deny
 #   bound, holds it, decider dispatcher                      deny
 #   bound, holds it, decider person, or author exclusion on  handed on
-#   record-unusable                                          as unlisted
+#   record-unusable, a release needed                        deny
+#   record-unusable, otherwise                               as unlisted
 #   not-dispatched, or the lookup failed                     as before
 #
 # "Handed on" is deny for a merge or a release and ask for a close: a
 # dispatched session releases only on its grant, as it merges only on its
-# grant. "As unlisted" is the verdict an instance the exemption list doesn't
-# name gets: deny for a merge, ask for a close or a release. "As before" is the
+# grant, and one whose record can't be used is denied a release the same way.
+# "As unlisted" is the verdict an instance the exemption list doesn't name
+# gets: deny for a merge, ask for a close. "As before" is the
 # verdict this hook gave without the lookup, exemption included, so the
 # exemption list now matters only to sessions niwa didn't dispatch. Every
 # other rule keeps its verdict for every session, and the final verdict is
@@ -794,7 +796,17 @@ case "$STATE" in
     bound) ;;
     record-unusable)
         # The session is the dispatch's own, but its record can't be read:
-        # it gets what an instance off the exemption list gets.
+        # it gets what an instance off the exemption list gets, except that
+        # a release is denied: a dispatched session releases only on its
+        # grant, and this one's can't be read.
+        case ",$NEEDS," in
+            *,cut-release,*)
+                if [ "$NONEX" != deny ]; then
+                    NONEX=deny
+                    NONEX_WHY="cut-release can't be confirmed"
+                fi
+                ;;
+        esac
         decide "$NONEX" "$NONEX_WHY (the session's dispatch record can't be used)"
         exit 0
         ;;
