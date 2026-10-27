@@ -74,6 +74,22 @@ unset = ["KOTO_ANCHOR"]
 command = '''[ -n "$NIWA_REAP_KEY" ] && command -v koto >/dev/null 2>&1 && koto session anchor close --help >/dev/null 2>&1 && koto session anchor close --key="$NIWA_REAP_KEY" --harness-session="$NIWA_SESSION_ID"; v=$(ls "$HOME/.claude/plugins/cache/shirabe/shirabe" 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -t. -k1,1n -k2,2n -k3,3n | tail -n 1); s="$HOME/.claude/plugins/cache/shirabe/shirabe/$v/skills/coordinate/scripts/unit-removed.sh"; [ -n "$v" ] && [ -O "$s" ] && [ -x "$s" ] && "$s" record >/dev/null 2>&1 || true'''
 timeout = "20s"
 
+# Asked before niwa removes an instance or a worktree: by the reap that starts
+# `niwa dispatch`, its backstop, `niwa watch`'s discard of a staged review, the
+# hook-made worktree sweep and a plain `niwa destroy`. koto answers for the path
+# niwa names: exit 0 when no koto run anchored under it still needs it, so niwa
+# removes it, and 1 while a run there is running and hasn't been continued
+# somewhere else, so niwa keeps it and prints `niwa: kept <instance>: ...` with
+# koto's line. A 2 (koto couldn't decide) or a run past the timeout also keeps
+# it. A host with no koto, or a koto without `koto session needed`, exits 0 and
+# removes as before. `niwa destroy --force` overrides a keep. koto finds its
+# sessions from HOME alone, so no names are passed. The value is a TOML literal
+# string checked byte for byte by tests/session-config.test.sh. Needs niwa
+# 0.40.0 and koto 0.27.0.
+[session.before_remove]
+command = '''command -v koto >/dev/null 2>&1 || exit 0; koto session needed --help >/dev/null 2>&1 || exit 0; exec koto session needed "$NIWA_REMOVE_PATH"'''
+timeout = "10s"
+
 # --- Environment ---
 
 [env]
