@@ -556,7 +556,7 @@ graphql_auto="gh api graphql -f query='mutation { enablePullRequestAutoMerge(inp
 # --- A coordinator holding merge-pr and close-issue, no instance named -----
 grant allow bound-merge-close unset 'gh pr merge 12'
 grant allow bound-merge-close unset 'gh issue close 34'
-grant ask   bound-merge-close unset 'gh release create v1' \
+grant deny  bound-merge-close unset 'gh release create v1' \
     'holds merge-pr,close-issue; needs cut-release'
 
 # --- Holding all three, as a workspace whose ceiling holds all three -------
@@ -573,12 +573,12 @@ grant allow bound-merge unset "$graphql_merge"
 grant allow bound-merge unset "$graphql_auto"
 grant allow bound-merge unset 'cd repo && gh pr merge 12'
 
-# --- Lacking the authority: merge and close are denied, release asks ------
+# --- Lacking the authority: merge, close and release are denied -----------
 grant deny  bound-none unset 'gh pr merge 12' 'holds none' 'needs merge-pr'
 grant deny  bound-none unset 'gh issue close 34' 'holds none' 'needs close-issue'
-grant ask   bound-none unset 'gh release create v1' 'holds none' 'needs cut-release'
+grant deny  bound-none unset 'gh release create v1' 'holds none' 'needs cut-release'
 grant deny  bound-merge unset 'gh issue close 34' 'holds merge-pr' 'needs close-issue'
-grant ask   bound-merge unset 'gh release create v1' 'holds merge-pr' 'needs cut-release'
+grant deny  bound-merge unset 'gh release create v1' 'holds merge-pr' 'needs cut-release'
 # The exemption list plays no part for a bound session.
 grant deny  bound-none listed 'gh pr merge 12' 'holds none' 'needs merge-pr'
 grant deny  bound-merge listed 'gh issue close 34' 'holds merge-pr' 'needs close-issue'
@@ -588,15 +588,15 @@ grant deny  bound-dispatcher unset 'gh pr merge 12' 'level supervised' 'merge-pr
 grant deny  bound-dispatcher unset 'gh issue close 34' 'level supervised' 'close-issue settled by dispatcher'
 grant deny  bound-dispatcher unset 'gh release create v1' 'level supervised' 'cut-release settled by dispatcher'
 grant deny  bound-dispatcher listed 'gh pr merge 12' 'level supervised' 'settled by dispatcher'
-# Lacking cut-release at the same level keeps today's ask.
-grant ask   bound-dispatcher-merge unset 'gh release create v1' 'holds merge-pr' 'needs cut-release'
+# Lacking cut-release at the same level is denied too.
+grant deny  bound-dispatcher-merge unset 'gh release create v1' 'holds merge-pr' 'needs cut-release'
 grant deny  bound-person unset 'gh pr merge 12' 'level strict' 'merge-pr settled by person'
 grant ask   bound-person unset 'gh issue close 34' 'level strict' 'close-issue settled by person'
-grant ask   bound-person unset 'gh release create v1' 'level strict' 'cut-release settled by person'
+grant deny  bound-person unset 'gh release create v1' 'level strict' 'cut-release settled by person'
 grant deny  bound-person listed 'gh pr merge 12' 'level strict' 'settled by person'
 grant deny  bound-exclusion unset 'gh pr merge 12' 'author exclusion' 'merge-pr'
 grant ask   bound-exclusion unset 'gh issue close 34' 'author exclusion' 'close-issue'
-grant ask   bound-exclusion unset 'gh release create v1' 'author exclusion' 'cut-release'
+grant deny  bound-exclusion unset 'gh release create v1' 'author exclusion' 'cut-release'
 grant deny  bound-exclusion listed 'gh pr merge 12' 'author exclusion' 'merge-pr'
 
 # --- A grant never lifts what something else in the command earned -------
@@ -694,7 +694,7 @@ grant ask   no-niwa listed '$GH pr merge 12'
 #   before.
 #   bound, the grant allowing all of NEEDS: BASE.
 #   bound, the grant allowing some: no more permissive than BASE, deny for a
-#   merge it doesn't allow, and at least ask for a close or a release it
+#   merge or a release it doesn't allow, and at least ask for a close it
 #   doesn't allow (a missing close-issue is denied, but a person decider
 #   asks; the rows above pin each exact verdict).
 compare_cmds=(
@@ -799,7 +799,7 @@ for name in "${compare_fixtures[@]}"; do
                     case ",$granted," in
                         *",$a,"*) allowed=$((allowed + 1)) ;;
                         *)
-                            if [ "$a" = merge-pr ]; then floor=deny
+                            if [ "$a" = merge-pr ] || [ "$a" = cut-release ]; then floor=deny
                             elif [ "$floor" = allow ]; then floor=ask
                             fi
                             ;;
@@ -903,30 +903,30 @@ for c in "${release_dispatches[@]}"; do
 done
 extra=$((extra + 2 * ${#release_dispatches[@]} - 1))
 
-# --- A bound session without cut-release is asked, listed or not --------
+# --- A bound session without cut-release is denied, listed or not -------
 for at in listed unlisted; do
     for c in 'gh workflow run prepare-release.yml' \
         'gh api -X GET -X POST repos/o/r/actions/workflows/prepare-release.yml/dispatches -f ref=main'; do
-        grant ask bound-merge-close "$at" "$c" 'holds merge-pr,close-issue' 'needs cut-release'
+        grant deny bound-merge-close "$at" "$c" 'holds merge-pr,close-issue' 'needs cut-release'
     done
     for c in 'gh workflow -R o/r run prepare-release.yml' \
         'gh api repos/o/r/actions/workflows/prepare-release.yml/dispatches?x=1 -f ref=main' \
         'gh api -X GET -X POST repos/o/r/actions/workflows/prepare-release.yml/dispatches -f ref=main'; do
-        grant ask bound-merge "$at" "$c" 'holds merge-pr' 'needs cut-release'
+        grant deny bound-merge "$at" "$c" 'holds merge-pr' 'needs cut-release'
     done
 done
 extra=$((extra + 2 * 2 - 1 + 2 * 3 - 1))
 # The merge-only coordinator prints exactly this.
-grant ask   bound-merge-close unset 'gh workflow run prepare-release.yml' \
-    'Online operation requires confirmation: session holds merge-pr,close-issue; needs cut-release'
+grant deny  bound-merge-close unset 'gh workflow run prepare-release.yml' \
+    'Blocked by gate-online hook: session holds merge-pr,close-issue; needs cut-release'
 
 # --- Held, but the level or author exclusion hands the decision on --------
 for at in listed unlisted; do
     grant deny bound-dispatcher-off "$at" 'gh workflow run prepare-release.yml' \
         'level supervised' 'cut-release settled by dispatcher'
-    grant ask  bound-person "$at" 'gh workflow run prepare-release.yml' \
+    grant deny bound-person "$at" 'gh workflow run prepare-release.yml' \
         'level strict' 'cut-release settled by person'
-    grant ask  bound-exclusion "$at" 'gh workflow run prepare-release.yml' \
+    grant deny bound-exclusion "$at" 'gh workflow run prepare-release.yml' \
         'author exclusion on for cut-release'
     grant deny bound-dispatcher "$at" 'gh workflow run prepare-release.yml' \
         'cut-release settled by dispatcher'
@@ -1022,7 +1022,7 @@ else
     report ok 'the hook sets UNDISPATCHED_RELEASE_DISPATCH=ask on a line of its own'
 fi
 flipped_hook=$(installed "flipped/$other_name" gate-online.sh "$flipped")
-for spec in 'allow|not-dispatched' 'allow|no-niwa' 'ask|record-unusable' 'ask|bound-merge-close' \
+for spec in 'allow|not-dispatched' 'allow|no-niwa' 'ask|record-unusable' 'deny|bound-merge-close' \
     'allow|bound-all' 'deny|bound-dispatcher-off'; do
     fixture "${spec#*|}"
     got=$(run "$flipped_hook" 'gh workflow run prepare-release.yml' ${FX[@]+"${FX[@]}"})
@@ -1067,13 +1067,13 @@ release_cmds=(
     '=|git commit -m "gh workflow run prepare-release.yml"'
     '=|# gh workflow run prepare-release.yml'
     $'=|cat <<\'EOF\'\ngh workflow run prepare-release.yml\nEOF'
-    '=|gh release create v1 --draft'
-    '=|gh release create v1'
+    '>|gh release create v1 --draft'
+    '>|gh release create v1'
     '=|tsuku update koto'
     '=|niwa apply'
     '=|claude plugin marketplace update shirabe'
     '=|gh workflow run prepare-release.yml; curl x'
-    '=|gh release create v1 && gh workflow run prepare-release.yml'
+    '>|gh release create v1 && gh workflow run prepare-release.yml'
     '=|gh api repos/o/r/pulls/12/merge'
     '=|gh pr merge 12'
     '=|gh api -X PUT repos/o/r/pulls/12/merge'
