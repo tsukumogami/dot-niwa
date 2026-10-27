@@ -48,8 +48,8 @@ Hook tests live outside `.niwa/`, because niwa installs every `.sh` under
 `hooks/<event>/` as a hook. Run the gate hook's case table with
 `bash tests/gate-online.test.sh`; CI runs it on Linux and macOS.
 `bash tests/session-config.test.sh` checks the `[session]` tables: it compares
-the on-reap command, shell text inside TOML, with the expected text byte for
-byte, then runs it against stubs.
+the on-reap and before-remove commands, shell text inside TOML, with the
+expected text byte for byte, then runs them against stubs.
 
 ### Repo-level context
 
