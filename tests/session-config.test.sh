@@ -48,10 +48,10 @@ EOF
 )
 printf '%s; %s' "$step1" "$step2" >"$work/expected"
 
-# The expected before-remove command. Both guards exit 0, so the removal goes
+# The expected before-remove command. Each guard exits 0, so the removal goes
 # ahead as before; otherwise koto's own exit status decides.
 before=$(cat <<'EOF'
-command -v koto >/dev/null 2>&1 || exit 0; koto session needed --help >/dev/null 2>&1 || exit 0; exec koto session needed "$NIWA_REMOVE_PATH"
+[ -n "$NIWA_REMOVE_PATH" ] && [ ! -e "$NIWA_REMOVE_PATH" ] && [ ! -L "$NIWA_REMOVE_PATH" ] && exit 0; command -v koto >/dev/null 2>&1 || exit 0; koto session needed --help >/dev/null 2>&1 || exit 0; exec koto session needed "$NIWA_REMOVE_PATH"
 EOF
 )
 printf '%s' "$before" >"$work/expected-before"
@@ -234,6 +234,7 @@ run_before() {
 }
 
 inst=$work/ws/inst-1
+mkdir -p "$inst"
 rc=$(run_before "$needkoto" "$inst" 0 "not needed")
 if [ "$rc" = 0 ] && [ "$(cat "$work/out")" = "not needed" ] \
     && [ "$(cat "$work/needed.log")" = "[session][needed][--help]
@@ -258,11 +259,34 @@ else
 fi
 
 odd="$work/ws/a dir \$HOME \"q\" *"
+mkdir -p "$odd"
 rc=$(run_before "$needkoto" "$odd" 1 "needed")
 if [ "$rc" = 1 ] && [ "$(sed -n 2p "$work/needed.log")" = "[session][needed][$odd]" ]; then
     ok "a path with spaces, quotes, \$ and * reaches koto as one argument, unexpanded"
 else
     bad "odd path: rc=$rc log=[$(cat "$work/needed.log")]"
+fi
+
+rc=$(run_before "$needkoto" "$work/ws/gone" 1 "needed")
+if [ "$rc" = 0 ] && [ ! -s "$work/out" ] && [ ! -s "$work/needed.log" ]; then
+    ok "a path that no longer exists: exits 0 quietly without asking koto"
+else
+    bad "gone path: rc=$rc log=[$(cat "$work/needed.log")] out=[$(cat "$work/out")]"
+fi
+
+ln -s "$work/ws/gone" "$work/ws/dangling"
+rc=$(run_before "$needkoto" "$work/ws/dangling" 1 "needed")
+if [ "$rc" = 1 ] && [ "$(sed -n 2p "$work/needed.log")" = "[session][needed][$work/ws/dangling]" ]; then
+    ok "a dangling symlink still exists as a path: koto is asked and decides"
+else
+    bad "dangling symlink: rc=$rc log=[$(cat "$work/needed.log")]"
+fi
+
+rc=$(run_before "$needkoto" "" 2 "can't decide")
+if [ "$rc" = 2 ] && [ "$(sed -n 2p "$work/needed.log")" = "[session][needed][]" ]; then
+    ok "an empty path is never taken as gone: koto is asked and decides"
+else
+    bad "empty path: rc=$rc log=[$(cat "$work/needed.log")]"
 fi
 
 rc=$(run_before "$base" "$inst" 1 "needed")
