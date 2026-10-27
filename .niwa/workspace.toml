@@ -15,7 +15,9 @@ visibility = "public"
 # --- Authority ---
 
 # What `niwa dispatch --grant` and `--role` may hand a worker. With no ceiling
-# nothing is grantable. cut-release stays out: a release cut stays a person's call.
+# nothing is grantable. A cut-release grant covers cutting a release, as
+# merge-pr covers a merge; an unresolved security line and a declared check's
+# `confirm:` still stay a person's call.
 # A successor coordinator is dispatched with `--role coordinator` instead of
 # being named by instance. The gate-online hook decides merges, closes and
 # releases for a dispatched session by its grant, through `niwa authority
@@ -24,10 +26,10 @@ visibility = "public"
 # verdict from before the grant. `level` is left to
 # niwa's default. Needs niwa 0.36.0; older versions warn and ignore it.
 [authority]
-ceiling = ["merge-pr", "close-issue"]
+ceiling = ["merge-pr", "close-issue", "cut-release"]
 
 [authority.roles.coordinator]
-authorities = ["merge-pr", "close-issue"]
+authorities = ["merge-pr", "close-issue", "cut-release"]
 
 # --- Claude ---
 
