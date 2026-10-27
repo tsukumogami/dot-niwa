@@ -82,13 +82,19 @@ timeout = "20s"
 # somewhere else, so niwa keeps it and prints `niwa: kept <instance>: ...` with
 # koto's line. A 2 (koto couldn't decide) or a run past the timeout also keeps
 # it. A host with no koto, or a koto without `koto session needed`, exits 0 and
-# removes as before. `niwa destroy --force` overrides a keep. koto finds its
-# sessions from HOME alone, so no names are passed. The value is a TOML literal
-# string checked byte for byte by tests/session-config.test.sh. Needs niwa
-# 0.40.0 and koto 0.27.0.
+# removes as before; so does one whose --help fails for any other reason.
+# `niwa destroy --force` overrides a keep.
+#
+# niwa runs the command with PATH, HOME and the names in env only. koto keeps
+# its sessions under $HOME/.koto under either backend, unless KOTO_HOME moves
+# that root, so KOTO_HOME is passed when it's set. Without it, a host that set
+# KOTO_HOME would have koto read an empty store and answer 0. The value is a
+# TOML literal string checked byte for byte by tests/session-config.test.sh.
+# Needs niwa 0.40.0 and koto 0.27.0.
 [session.before_remove]
 command = '''command -v koto >/dev/null 2>&1 || exit 0; koto session needed --help >/dev/null 2>&1 || exit 0; exec koto session needed "$NIWA_REMOVE_PATH"'''
 timeout = "10s"
+env = ["KOTO_HOME"]
 
 # --- Environment ---
 

@@ -77,6 +77,7 @@ with open(out + "/shape.json", "w", encoding="utf-8") as f:
         "timeout": on_reap.get("timeout"),
         "before_remove_keys": sorted(before_remove),
         "before_remove_timeout": before_remove.get("timeout"),
+        "before_remove_env": before_remove.get("env"),
         "dispatch_env": session.get("dispatch_env"),
     }, f, sort_keys=True)
 EOF
@@ -100,7 +101,7 @@ else
 fi
 
 shape=$(cat "$work/shape.json")
-want='{"before_remove_keys": ["command", "timeout"], "before_remove_timeout": "10s", "dispatch_env": {"passthrough": ["KOTO_DISPATCHER_ANCHOR"], "unset": ["KOTO_ANCHOR"]}, "on_reap_keys": ["command", "timeout"], "session_keys": ["before_remove", "dispatch_env", "on_reap"], "timeout": "20s"}'
+want='{"before_remove_env": ["KOTO_HOME"], "before_remove_keys": ["command", "env", "timeout"], "before_remove_timeout": "10s", "dispatch_env": {"passthrough": ["KOTO_DISPATCHER_ANCHOR"], "unset": ["KOTO_ANCHOR"]}, "on_reap_keys": ["command", "timeout"], "session_keys": ["before_remove", "dispatch_env", "on_reap"], "timeout": "20s"}'
 if [ "$shape" = "$want" ]; then
     ok "timeouts, dispatch_env lists and [session] keys are exactly as declared"
 else
