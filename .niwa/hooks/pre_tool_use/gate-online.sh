@@ -93,15 +93,16 @@
 # and decides each needed authority by the answer:
 #
 #   bound, holds it, decider session, author exclusion off   allow
-#   bound, lacks merge-pr or close-issue                     deny
-#   bound, lacks cut-release                                 ask
+#   bound, lacks it                                          deny
 #   bound, holds it, decider dispatcher                      deny
-#   bound, holds it, decider person, or author exclusion on  as unlisted
+#   bound, holds it, decider person, or author exclusion on  handed on
 #   record-unusable                                          as unlisted
 #   not-dispatched, or the lookup failed                     as before
 #
-# "As unlisted" is the verdict an instance the exemption list doesn't name
-# gets: deny for a merge, ask for a close or a release. "As before" is the
+# "Handed on" is deny for a merge or a release and ask for a close: a
+# dispatched session releases only on its grant, as it merges only on its
+# grant. "As unlisted" is the verdict an instance the exemption list doesn't
+# name gets: deny for a merge, ask for a close or a release. "As before" is the
 # verdict this hook gave without the lookup, exemption included, so the
 # exemption list now matters only to sessions niwa didn't dispatch. Every
 # other rule keeps its verdict for every session, and the final verdict is
@@ -126,9 +127,9 @@
 # finishes within 5 seconds even when niwa hangs. niwa's authority guide
 # ("A gate on the binding") is the contract this follows. Gating another
 # authority means touching rules() (ra), the order list in END, the jq
-# authorities list, unlisted() and the missing-authority branch. Gating
-# another command under an existing authority needs only rules() and
-# mentions(), as the release workflow dispatch does under cut-release.
+# authorities list and handed_on(). Gating another command under an
+# existing authority needs only rules() and mentions(), as the release
+# workflow dispatch does under cut-release.
 #
 # To remove the exemption, for instance once every merging session is
 # dispatched with a grant: delete the case block below and the merge_exempt
@@ -818,9 +819,11 @@ raise() {
     fi
 }
 
-# unlisted AUTHORITY: what an instance off the exemption list gets.
-unlisted() {
-    case "$1" in merge-pr) echo deny ;; *) echo ask ;; esac
+# handed_on AUTHORITY: the verdict for a held authority whose decision is
+# handed on. For a merge or a close it is what an instance off the exemption
+# list gets; a release is denied, as a merge is.
+handed_on() {
+    case "$1" in merge-pr | cut-release) echo deny ;; *) echo ask ;; esac
 }
 
 # lookup()'s answer, one value per line: $1 bound, $2 the level, $3 the
@@ -845,19 +848,13 @@ for POINT in "$@"; do
             if [ "$DECIDER" = dispatcher ]; then
                 raise deny "session level $LEVEL; $AUTHORITY settled by dispatcher"
             elif [ "$DECIDER" = person ]; then
-                raise "$(unlisted "$AUTHORITY")" "session level $LEVEL; $AUTHORITY settled by person"
+                raise "$(handed_on "$AUTHORITY")" "session level $LEVEL; $AUTHORITY settled by person"
             elif [ "$EXCLUSION" = on ]; then
-                raise "$(unlisted "$AUTHORITY")" "author exclusion on for $AUTHORITY"
+                raise "$(handed_on "$AUTHORITY")" "author exclusion on for $AUTHORITY"
             fi
             ;;
         *)
-            # A missing cut-release keeps today's ask; a missing merge-pr or
-            # close-issue is denied.
-            if [ "$AUTHORITY" = cut-release ]; then
-                raise ask "session holds $HELD; needs $AUTHORITY"
-            else
-                raise deny "session holds $HELD; needs $AUTHORITY"
-            fi
+            raise deny "session holds $HELD; needs $AUTHORITY"
             ;;
     esac
 done
