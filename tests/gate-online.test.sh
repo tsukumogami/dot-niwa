@@ -609,8 +609,14 @@ grant deny  bound-all unset 'gh release create v1 && gh repo delete o/r --yes' '
 # --- A dispatched session whose record can't be used: never exempt -------
 grant deny  record-unusable listed 'gh pr merge 12'
 grant ask   record-unusable listed 'gh issue close 34'
-grant ask   record-unusable listed 'gh release create v1'
+grant deny  record-unusable listed 'gh release create v1' 'cut-release' "record can't be used"
 grant deny  record-unusable unlisted 'gh pr merge 12'
+grant ask   record-unusable unlisted 'gh issue close 34'
+grant deny  record-unusable unlisted 'gh release create v1' 'cut-release' "record can't be used"
+grant deny  record-unusable listed 'gh release -R o/r create v1'
+grant deny  record-unusable listed 'gh release create v1 && gh issue close 34'
+grant deny  record-unusable unlisted 'gh issue close 34 && gh release create v1'
+grant deny  record-unusable unlisted 'gh pr merge 12 && gh release create v1'
 
 # --- A session niwa didn't dispatch: today's verdict, exemption included --
 grant allow not-dispatched listed 'gh pr merge 12'
@@ -689,7 +695,8 @@ grant ask   no-niwa listed '$GH pr merge 12'
 #   NEEDS "-": the same verdict as before, for every session.
 #   NEEDS "!": ask, for every session.
 #   not-dispatched and every failed lookup: the same verdict as before.
-#   record-unusable: the verdict an unlisted instance got before.
+#   record-unusable: the verdict an unlisted instance got before, but deny
+#   for any command that needs cut-release.
 #   bound, the grant allowing none of NEEDS: never more permissive than
 #   before.
 #   bound, the grant allowing all of NEEDS: BASE.
@@ -827,8 +834,16 @@ for name in "${compare_fixtures[@]}"; do
                         fi
                         ;;
                     record-unusable)
-                        want="${old_unlisted[$i]} (as an unlisted instance before)"
-                        ok=$([ "$got" = "${old_unlisted[$i]}" ] && echo 1)
+                        case ",$needs," in
+                            *,cut-release,*)
+                                want="deny (a release is denied when the record can't be used)"
+                                ok=$([ "$got" = deny ] && echo 1)
+                                ;;
+                            *)
+                                want="${old_unlisted[$i]} (as an unlisted instance before)"
+                                ok=$([ "$got" = "${old_unlisted[$i]}" ] && echo 1)
+                                ;;
+                        esac
                         ;;
                     *)
                         want="$before (as before)"
@@ -933,14 +948,28 @@ for at in listed unlisted; do
 done
 extra=$((extra + 4))
 
-# --- Not dispatched, record unusable, or a lookup that failed: ask --------
-for name in record-unusable not-dispatched no-niwa niwa-bin-missing exit-1 \
+# --- Record unusable: a dispatched session is denied, listed or not ------
+for at in listed unlisted; do
+    for c in 'gh workflow run prepare-release.yml' \
+        'gh workflow -R o/r run prepare-release.yml' \
+        'gh api -X POST repos/o/r/actions/workflows/prepare-release.yml/dispatches -f ref=main' \
+        'gh api repos/o/r/actions/workflows/prepare-release.yml/dispatches?x=1 -f ref=main'; do
+        grant deny record-unusable "$at" "$c" 'cut-release' "record can't be used"
+    done
+done
+extra=$((extra + 2 * 4 - 1))
+# Another workflow, and a command that can't be read, are not a release.
+grant allow record-unusable unlisted 'gh workflow run ci.yml'
+grant ask   record-unusable listed 'gh workflow run 123456' "can't be read"
+
+# --- Not dispatched, or a lookup that failed: ask -------------------------
+for name in not-dispatched no-niwa niwa-bin-missing exit-1 \
     bad-schema two-docs bad-decider; do
     for at in listed unlisted; do
         grant ask "$name" "$at" 'gh workflow run prepare-release.yml' 'release workflow dispatch'
     done
 done
-extra=$((extra + 8 * 2 - 1))
+extra=$((extra + 7 * 2 - 1))
 timed 5 ask sleep 'gh workflow run prepare-release.yml'
 timed 5 ask sleep-no-timeout 'gh workflow run prepare-release.yml'
 
@@ -1022,7 +1051,7 @@ else
     report ok 'the hook sets UNDISPATCHED_RELEASE_DISPATCH=ask on a line of its own'
 fi
 flipped_hook=$(installed "flipped/$other_name" gate-online.sh "$flipped")
-for spec in 'allow|not-dispatched' 'allow|no-niwa' 'ask|record-unusable' 'deny|bound-merge-close' \
+for spec in 'allow|not-dispatched' 'allow|no-niwa' 'deny|record-unusable' 'deny|bound-merge-close' \
     'allow|bound-all' 'deny|bound-dispatcher-off'; do
     fixture "${spec#*|}"
     got=$(run "$flipped_hook" 'gh workflow run prepare-release.yml' ${FX[@]+"${FX[@]}"})
