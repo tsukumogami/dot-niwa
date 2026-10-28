@@ -289,13 +289,21 @@ function prints(s,   m, k, x, h, empty) {
     k = 1
     while (k <= m) {
         x = segw[s, k]
-        if (x ~ /^(!|\{|\}|if|then|else|elif|fi|do|done|while|until|time|coproc)$/) { k++; continue }
+        if (x ~ /^(!|\{|\}|if|then|else|elif|fi|do|done|while|until|coproc)$/) { k++; continue }
+        if (x == "time") {
+            for (k++; k <= m && segw[s, k] ~ /^-/; k++) ;
+            continue
+        }
         if (x ~ /^(for|select|case|\[\[|\[|test)$/) return ""
         if (x == "function") { k += 2; continue }
         if (x ~ /^[A-Za-z_][A-Za-z0-9_]*\+?=/) { k++; continue }
         h = x; sub(/.*\//, "", h)
         if (h ~ /^(command|builtin|exec|nohup|setsid|stdbuf)$/) {
-            for (k++; k <= m && segw[s, k] ~ /^-/; k++) if (segw[s, k] == "-a") k++
+            for (k++; k <= m && segw[s, k] ~ /^-/; k++) {
+                # command -v and -V name the command instead of running it.
+                if (h == "command" && segw[s, k] ~ /^-[pvV]*[vV]/) return ""
+                if (segw[s, k] == "-a") k++
+            }
             continue
         }
         if (h == "sudo") {
