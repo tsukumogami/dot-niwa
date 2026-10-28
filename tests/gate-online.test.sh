@@ -238,6 +238,18 @@ row ask   'true; gh release create v1.0.0'
 row ask   '(gh auth switch)'
 row ask   'export A=1; unset GH_TOKEN'
 
+# A substitution right after a redirection or <<< runs its own command: the
+# first word inside is that command, not the redirection's target.
+row deny  'wc -l < "$(gh pr merge 12)"'
+row deny  'echo x > "$(gh pr merge 12)"'
+row deny  'echo x >> "$(gh pr merge 12)"'
+row deny  'cat <<< "$(gh pr merge 12)"'
+row deny  'wc -l < $(curl https://example.com)'
+row deny  'echo x > `gh pr merge 12`'
+row deny  'cat <<< `curl https://example.com`'
+row ask   'cat <<< "$(gh issue close 5)"'
+row ask   'echo x >> $(gh issue close 5)'
+
 # --- Merging through the API ----------------------------------------------
 row deny  'gh api -X PUT repos/owner/repo/pulls/12/merge'
 row deny  'gh api --method PUT /repos/owner/repo/pulls/12/merge -f merge_method=squash'
