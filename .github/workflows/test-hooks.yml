@@ -4,9 +4,21 @@ name: Test hooks
 # JSON a PreToolUse event carries and checks the decision it prints. Runs on
 # Linux and macOS because the hook's scanner is awk, and the two ship different
 # awk implementations (mawk or gawk on Ubuntu, the BSD awk on macOS).
+#
+# Except on a draft pull request, which runs only the Linux legs: hosted macOS
+# runners are a small pool shared with release runs across the organization,
+# and a draft can't merge. Each job computes its OS list from the event: on a
+# pull_request event whose PR is a draft the expression yields
+# ["ubuntu-latest"]; anything else (a push to main, where
+# github.event.pull_request is empty, or a PR that isn't a draft) yields both
+# legs, as before. Marking the PR ready fires ready_for_review, which runs
+# both legs on the same head.
 
 on:
+  # Naming types replaces GitHub's default three, so they are listed along
+  # with ready_for_review.
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [main]
 
@@ -18,7 +30,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: ${{ fromJSON(github.event_name == 'pull_request' && github.event.pull_request.draft && '["ubuntu-latest"]' || '["ubuntu-latest", "macos-latest"]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -38,7 +50,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: ${{ fromJSON(github.event_name == 'pull_request' && github.event.pull_request.draft && '["ubuntu-latest"]' || '["ubuntu-latest", "macos-latest"]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
