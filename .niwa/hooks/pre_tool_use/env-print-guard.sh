@@ -88,9 +88,9 @@
 # text and the mode it starts in, so one pass reads every text the line hands
 # to another shell; and a heredoc mode ("h") reads an unquoted heredoc body,
 # where quotes are plain text and a backslash escapes only $ ` \ and a
-# newline. One fix here is not yet in gate-online.sh: a $( ) or backtick
-# opened right after a redirection or <<< keeps the pending target for the
-# word it is part of, so the first word inside it (env in
+# newline. The shared part matches gate-online.sh's, including a $( ) or
+# backtick opened right after a redirection or <<<, which keeps the pending
+# target for the word it is part of, so the first word inside it (env in
 # cat <<< "$(env)") stays a command. A fix to the shared part belongs in both
 # copies.
 #

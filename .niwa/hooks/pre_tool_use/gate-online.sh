@@ -179,7 +179,8 @@ BEGIN { RS = "\001" }
 { src = (NR == 1) ? $0 : src "\001" $0 }
 
 # ---------------------------------------------------------------- scanning
-# env-print-guard.sh beside this hook carries a copy of this scanner: keep the two in step.
+# env-print-guard.sh beside this hook carries a copy of this scanner, and the
+# part the two share matches: a fix to either belongs in both.
 
 function addword() {
     if (!wany) return
@@ -208,11 +209,14 @@ function newseg() {
     segn[seg] = 0
 }
 
+# A pending redirection or here-string waits for the word the substitution
+# is part of, not for the first word inside it.
 function push(type) {
     fsp++
     ftype[fsp] = type; fmode[fsp] = mode; fseg[fsp] = seg
     fword[fsp] = word; fwany[fsp] = wany; fwdyn[fsp] = wdyn; fdepth[fsp] = 0
-    word = ""; wany = 0; wdyn = 0
+    fredir[fsp] = redir_next; fherestr[fsp] = herestr_next
+    word = ""; wany = 0; wdyn = 0; redir_next = 0; herestr_next = 0
     mode = "c"
     seg = ++nseg
     segn[seg] = 0
@@ -222,6 +226,7 @@ function pop() {
     addword()
     seg = fseg[fsp]; mode = fmode[fsp]
     word = fword[fsp] "$(...)"; wany = 1; wdyn = 1
+    redir_next = fredir[fsp]; herestr_next = fherestr[fsp]
     fsp--
 }
 
