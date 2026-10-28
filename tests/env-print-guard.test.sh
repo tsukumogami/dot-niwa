@@ -98,7 +98,8 @@ wording_ok() {
         *) return 1 ;;
     esac
     case "$why" in *MARKER*|*marker*) return 1 ;; esac
-    for form in 'secrets included' 'env | cut -d= -f1' 'printenv NAME' \
+    case "$why" in *'secrets included'*|*'lists every variable name'*) ;; *) return 1 ;; esac
+    for form in 'env | cut -d= -f1' 'printenv NAME' \
         'env VAR=value cmd' 'env -u VAR cmd' 'set -e' 'set -euo pipefail' 'set -x' 'set -- a b'; do
         case "$why" in *"$form"*) ;; *) return 1 ;; esac
     done
@@ -255,6 +256,178 @@ row allow 'cd env && ls'
 row allow 'docker run --env MARKER_NAME=marker-value image'
 row allow 'export MARKER_NAME=marker-value'
 row allow 'git status'
+
+# --- Text handed to another shell -----------------------------------------
+row deny  'bash -c env'
+row deny  "bash -c 'env'"
+row deny  'sh -c "printenv"'
+row deny  "bash -lc 'set'"
+row deny  "bash -e -c 'env | sort'"
+row deny  "bash -o pipefail -c 'env | sort'"
+row deny  "bash -eo pipefail -c 'true; printenv'"
+row deny  "bash --norc -c 'env'"
+row deny  "bash -c -- 'env'"
+row deny  "zsh -c 'env'"
+row deny  "/bin/sh -c 'true && env'"
+row deny  "dash -c 'echo \$(env)'"
+row deny  "ksh -c 'printenv'"
+row deny  "sudo sh -c 'env'"
+row deny  "timeout 5 bash -c 'env'"
+row deny  "bash -c \"bash -c 'env'\""
+row deny  "bash -c 'export -p'"
+row deny  'eval env'
+row deny  "eval 'printenv'"
+row deny  'eval "set"'
+row deny  'eval -- env'
+row deny  "eval 'echo \$(env)'"
+row deny  'eval eval env'
+row deny  "eval 'declare -p'"
+row deny  $'bash <<\'EOF\'\nenv\nEOF'
+row deny  $'sh <<EOF\nprintenv | sort\nEOF'
+row deny  $'bash -s <<\'EOF\'\nset\nEOF'
+row deny  "bash <<< 'env'"
+row deny  'env -S env'
+row deny  "env -S 'printenv'"
+row deny  'env -Senv'
+row deny  "env --split-string='env -u MARKER_NAME'"
+
+# --- Substitutions in an unquoted heredoc body ----------------------------
+row deny  $'cat <<EOF\n$(env)\nEOF'
+row deny  $'cat <<EOF\n`printenv`\nEOF'
+row deny  $'cat <<-EOF\n\tsee $(set)\n\tEOF'
+row deny  $'cat <<EOF\n"$(env)"\nEOF'
+row deny  $'cat <<EOF\n\'$(env)\'\nEOF'
+row deny  $'cat <<EOF\n\\"$(env)\\"\nEOF'
+row deny  $'git commit -F - <<EOF\nrun `env` to see them\nEOF'
+row deny  $'x=$(cat <<EOF\nnames: $(env | sort)\nEOF\n)'
+row deny  $'gh pr create --body "$(cat <<EOF\nuse `export -p`\nEOF\n)"'
+row deny  $'cat <<EOF > out.txt\nok\n$(declare -x)\nEOF'
+row deny  'cat <<< "$(env)"'
+row deny  'cat <<< `printenv`'
+row deny  'echo hi > "$(env)"'
+row deny  'echo hi 2>$(printenv)'
+row allow 'echo hi > "$(date).log"'
+
+# --- Commands run by xargs and find ---------------------------------------
+row deny  'xargs env'
+row deny  'echo | xargs env'
+row deny  'xargs -0 env'
+row deny  'xargs -n 1 env'
+row deny  'xargs -I {} env'
+row deny  'xargs env -u MARKER_NAME'
+row deny  'xargs printenv'
+row deny  "xargs sh -c 'env'"
+row deny  'find . -maxdepth 0 -exec env \;'
+row deny  "find . -exec env ';'"
+row deny  'find . -execdir printenv \;'
+row deny  'find . -ok env \;'
+row deny  'find . -okdir env \;'
+row deny  'find . -name x -exec env -u MARKER_NAME \;'
+row deny  'find . -exec true \; -exec env \;'
+row deny  "find . -exec sh -c 'env' \\;"
+row deny  'find . -exec /usr/bin/env +'
+
+# --- Builtins that print variables ----------------------------------------
+row deny  'export'
+row deny  'export -p'
+row deny  'export -fp'
+row deny  'export -p MARKER_NAME'
+row deny  'declare'
+row deny  'declare -p'
+row deny  'declare -x'
+row deny  'declare -px'
+row deny  'declare -r'
+row deny  'declare --'
+row deny  'typeset'
+row deny  'typeset -p'
+row deny  'typeset -x'
+row deny  'compgen -e'
+row deny  'compgen -v'
+row deny  'compgen -ev'
+row deny  'compgen -ce'
+row deny  'compgen -A export'
+row deny  'compgen -A variable'
+row deny  'compgen -Avariable'
+row deny  'compgen -e MARKER'
+row deny  'compgen -W "a b" -v'
+row deny  'builtin declare -p'
+row deny  'command export -p'
+row deny  'declare -p | grep MARKER_NAME'
+row deny  'export -p | cut -d= -f1'
+row deny  'true && declare -x'
+row deny  'echo $(compgen -v)'
+
+# --- Ordinary commands near the new forms ---------------------------------
+row allow "bash -c 'echo env'"
+row allow "bash -c 'env | cut -d= -f1'"
+row allow "bash -c 'printenv HOME'"
+row allow "bash -c 'set -e; make test'"
+row allow "sh -c 'git status'"
+row allow "bash -c 'echo \"\$1\"' _ env"
+row allow "bash -c 'echo \"\\\$(env)\"'"
+row allow 'bash script.sh'
+row allow 'bash -n env.sh'
+row allow 'bash tests/env-print-guard.test.sh'
+row allow 'bash'
+row allow $'bash <<\'EOF\'\necho env\nEOF'
+row allow $'bash script.sh <<EOF\nenv\nEOF'
+row allow 'grep -rn "bash -c env" .'
+row allow 'eval "$(ssh-agent -s)"'
+row allow 'eval set -- a b'
+row allow "eval 'export MARKER_NAME=marker-value'"
+row allow $'cat <<EOF\nenv\nprintenv\nset\nexport -p\nEOF'
+row allow $'cat <<EOF\n$(date) env\nEOF'
+row allow $'cat <<EOF\n$(env | cut -d= -f1)\nEOF'
+row allow $'cat <<\'EOF\'\n$(env)\nEOF'
+row allow $'cat <<"EOF"\n`env`\nEOF'
+row allow $'cat <<\\EOF\n$(env)\nEOF'
+row allow $'cat <<EOF\n\\$(env) and \\`env\\`\nEOF'
+row allow $'git commit -F - <<\'EOF\'\nfix: refuse `env` in heredocs\nEOF'
+row allow $'cat <<EOF\n${MARKER_NAME:-env}\nEOF'
+row allow 'cat <<< "env"'
+row allow 'xargs echo env'
+row allow 'xargs env make'
+row allow 'xargs -I {} env {}'
+row allow 'xargs printenv HOME'
+row allow 'xargs grep -l printenv'
+row allow 'find . -name env'
+row allow 'find env -type f'
+row allow "find . -name '*.env' -delete"
+row allow 'find . -exec grep -l env {} \;'
+row allow 'find . -exec env {} \;'
+row allow 'find . -exec env -u MARKER_NAME ls {} +'
+row allow 'export MARKER_NAME'
+row allow 'export -n MARKER_NAME'
+row allow 'export -f myfunc'
+row allow 'export -- MARKER_NAME=marker-value'
+row allow 'declare -p MARKER_NAME'
+row allow 'declare -x MARKER_NAME=marker-value'
+row allow 'declare -a list'
+row allow 'declare -F'
+row allow 'declare -f'
+row allow 'typeset -p MARKER_NAME'
+row allow 'compgen -c'
+row allow 'compgen -f src/'
+row allow 'compgen -W "e v" -- e'
+row allow 'compgen -A function'
+row allow 'compgen -o default -c'
+row allow "grep -rn 'export -p' ."
+row allow 'echo declare -p compgen -e'
+row allow 'git commit -m "refuse export -p, declare -x and compgen -e"'
+row allow 'cat /etc/environment'
+row allow 'ls ~/.config/exports'
+
+# --- Known gaps, listed in the hook's header: these pass ------------------
+row allow 'bash -c "$MARKER_NAME"'
+row allow 'eval "$MARKER_NAME"'
+row allow "\$SHELL -c 'env'"
+row allow "printf 'env\\n' | bash"
+row allow 'source ./print-all.sh'
+row allow "watch -n 5 env"
+
+# --- More text to hand on than the hook reads -----------------------------
+row ask   "$(printf 'eval %.0s' {1..70})true"
+row deny  "$(printf 'eval %.0s' {1..60})env"
 
 # --- Payloads with nothing to inspect, and a failing scanner --------------
 row allow ''
