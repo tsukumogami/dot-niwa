@@ -37,9 +37,11 @@ authorities = ["merge-pr", "close-issue", "cut-release"]
 marketplaces = ["tsukumogami/shirabe", "tsukumogami/koto"]
 plugins = ["shirabe@shirabe", "koto-skills@koto"]
 
+# env-print-guard.sh refuses a bare env, printenv or set, which would print
+# every secret in the session's environment into the transcript.
 [[claude.hooks.pre_tool_use]]
 matcher = "Bash"
-scripts = ["hooks/pre_tool_use/gate-online.sh"]
+scripts = ["hooks/pre_tool_use/gate-online.sh", "hooks/pre_tool_use/env-print-guard.sh"]
 
 [[claude.hooks.stop]]
 scripts = ["hooks/stop/workflow-continue.sh"]
