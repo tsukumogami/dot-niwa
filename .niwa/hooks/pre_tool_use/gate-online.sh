@@ -179,6 +179,7 @@ BEGIN { RS = "\001" }
 { src = (NR == 1) ? $0 : src "\001" $0 }
 
 # ---------------------------------------------------------------- scanning
+# env-print-guard.sh beside this hook carries a copy of this scanner: keep the two in step.
 
 function addword() {
     if (!wany) return
