@@ -148,3 +148,7 @@ This applies to:
 - Design documents
 - README and other documentation
 - Error messages that reference paths
+
+## Golden Key Remediation
+
+Deleting registry golden keys in R2 for versions that can no longer be regenerated, and the orphan golden keys of recipes that moved to the embedded recipes or were removed from the registry, is an authorized remediation that doesn't need owner approval. The condition is that the exact key list is posted on the tracking issue before anything is deleted, and that a fresh listing afterwards shows every listed key gone and every other key still there. It covers those two kinds of key and nothing else: any other delete, prune or overwrite in R2 still needs approval.
