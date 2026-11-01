@@ -68,9 +68,10 @@
 #     interpreter reads from a heredoc, here-string or pipe when it is given
 #     no script) that mentions a gated command, read with its quotes and
 #     punctuation set aside, so a call written as a list of strings counts,
-#     even with a word or two between program and arguments; a force push
-#     there needs the word git before push; an awk program counts when it
-#     also runs a command (system, getline or a pipe);
+#     even with an options object or git options between program and
+#     subcommand (in bounded windows, so ordinary code is left alone); a
+#     force push there needs the word git before push; an awk program
+#     counts when it also runs a command (system, getline or a pipe);
 #   - a command name that is itself an expansion ($GH pr merge);
 #   - a command name that is a glob pattern which could be several gated
 #     commands, or a wrapper running text that mentions one;
@@ -603,49 +604,88 @@ function gmentions(t) {
 }
 
 # Code with its quotes and punctuation turned into blanks, so a call written
-# as a list of strings reads as the command it names. With keep set, the
-# statement separators ; & and | stay.
-function loosen(t, keep) {
-    if (keep) gsub(/[^A-Za-z0-9_.\/+=\n;&|-]/, " ", t)
-    else gsub(/[^A-Za-z0-9_.\/+=\n-]/, " ", t)
+# as a list of strings reads as the command it names.
+function loosen(t) {
+    gsub(/[^A-Za-z0-9_.\/+=\n-]/, " ", t)
     return t
 }
 
-# Whether inline interpreter code t mentions a gated command, read as it is
-# and with its punctuation set aside. A force push needs the word git before
-# push with no statement separator between them, since an array push followed
-# later by a + or a -f test is ordinary code. A gh or niwa call also counts
-# with its words spread over a few more (an options object, or a -R option,
-# between program and subcommand).
-function imentions(t,   u) {
-    u = loosen(t)
-    return gmentions(t) || gmentions(u) || gitpush(t) || gitpush(loosen(t, 1)) || spaced(u)
-}
-
-function gitpush(t) {
-    return t ~ /(^|[^A-Za-z0-9_.-])git[ \t\n]+([^ \t\n;&|]+[ \t\n]+)*push[ \t]([^\n;&|]*[ \t])?(--force|-[A-Za-z]*f[A-Za-z]*([ \t\n;&|]|$)|\+)/
-}
-
-# The words of u (code with its punctuation set aside) hold gh followed by one
-# of its gated subcommand pairs in order, or niwa followed by reap, all within
-# the twelve words after gh or niwa.
-function spaced(u,   w, n, i, p, q, np, pw, lim) {
-    n = split(u, w, /[ \t\n]+/)
-    np = split("pr merge repo delete auth switch release create issue close", pw, " ")
+# Whether inline interpreter code t mentions a gated command. First the
+# patterns mentions() uses, on the code as it is and with its punctuation set
+# aside. Then three shapes over the words of the code (split at blanks,
+# quotes, brackets, parentheses and commas, so a quoted option value holding
+# ; & or | stays one word):
+#   - git, then only git options (a word starting with -, and the value word
+#     after -c, -C, --git-dir, --work-tree, --namespace, --exec-path or
+#     --config-env given without =) or an args, argv or cmd key, then push,
+#     then a force flag (-f, --force, --force-with-lease) or a +refspec
+#     later on the same line as push. Any other word between git and push
+#     (git rev-list, git branch) is no push.
+#   - gh, then within its next 24 words one of its gated subcommand pairs as
+#     two adjacent words (an options object or -R before the pair is fine).
+#   - niwa directly followed by reap, or reap right after an args, argv or
+#     cmd key with niwa at most 24 words before it.
+# The windows are bounded on purpose: wider or unordered readings asked on
+# ordinary code (a gh pr list followed by a variable named merge, a
+# git rev-list followed by an array push). Code that spreads a command
+# across a data structure beyond these shapes, or over several lines (a
+# force flag on the line after push), is out of reach, as code that builds
+# the command from pieces is. Shell text is not read this way: it goes
+# through mentions().
+function imentions(t,   n, i, j, x, y, np, pw, q, lim) {
+    if (gmentions(t) || gmentions(loosen(t))) return 1
+    n = iwords(t)
+    np = split("pr merge repo delete auth switch release create issue close workflow run", pw, " ")
     for (i = 1; i <= n; i++) {
-        lim = i + 12
-        if (lim > n) lim = n
-        if (w[i] == "niwa" && near(w, lim, i, "reap")) return 1
-        if (w[i] != "gh") continue
-        for (q = 1; q < np; q += 2)
-            if ((p = near(w, lim, i, pw[q])) && near(w, lim, p, pw[q + 1])) return 1
+        x = iw[i]; sub(/.*\//, "", x)
+        if (x == "git" && forcepush(i, n)) return 1
+        if (x == "niwa" && i < n && iw[i + 1] == "reap") return 1
+        if (x == "reap" && i > 2 && iw[i - 1] ~ /^(args|argv|cmd)[:=]*$/)
+            for (j = i - 2; j >= 1 && j >= i - 24; j--) {
+                y = iw[j]; sub(/.*\//, "", y)
+                if (y == "niwa") return 1
+            }
+        if (x == "gh") {
+            lim = i + 24
+            if (lim > n - 1) lim = n - 1
+            for (j = i + 1; j <= lim; j++)
+                for (q = 1; q < np; q += 2)
+                    if (iw[j] == pw[q] && iw[j + 1] == pw[q + 1]) return 1
+        }
     }
     return 0
 }
 
-# The position of the first word x among w[i + 1 .. lim], or 0.
-function near(w, lim, i, x,   j) {
-    for (j = i + 1; j <= lim; j++) if (w[j] == x) return j
+# Splits inline code t into words iw[1..n], the line of each in il[]: words
+# end at blanks, quotes, backslashes, brackets, parentheses, braces and
+# commas, and lose any ; & or | at their ends. Returns n.
+function iwords(t,   L, nl, p, c, i, k, n, x) {
+    delete iw; delete il
+    nl = split(t, L, "\n"); n = 0
+    for (i = 1; i <= nl; i++) {
+        c = split(L[i], p, "[] \t\r\"\047`,()[{}\\\\]+")
+        for (k = 1; k <= c; k++) {
+            x = p[k]
+            gsub(/^[;&|]+|[;&|]+$/, "", x)
+            if (x != "") { iw[++n] = x; il[n] = i }
+        }
+    }
+    return n
+}
+
+# Whether the words after git at iw[i] are git options and then push, with a
+# force flag or +refspec later on the line of push.
+function forcepush(i, n,   j, p) {
+    for (j = i + 1; j <= n; j++) {
+        if (iw[j] == "push") break
+        if (iw[j] ~ /^(-c|-C|--git-dir|--work-tree|--namespace|--exec-path|--config-env)$/) { j++; continue }
+        if (iw[j] ~ /^-/ || iw[j] ~ /^(args|argv|cmd)[:=]*$/) continue
+        return 0
+    }
+    if (j > n) return 0
+    p = j
+    for (j = p + 1; j <= n && il[j] == il[p]; j++)
+        if (iw[j] ~ /^(-[uqvn46d]*f[uqvn46d]*|--force|--force-with-lease(=.*)?)$/ || iw[j] ~ /^\+[A-Za-z0-9_.\/]/) return 1
     return 0
 }
 

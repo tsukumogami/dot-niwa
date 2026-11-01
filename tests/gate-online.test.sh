@@ -401,6 +401,9 @@ row allow './scripts/merge-everything.sh'
 # word after it counts for nothing, so ordinary lines run through a path in a
 # variable never ask. Two layers of obscurity at once stay allowed.
 row allow '$GH pr m* 12'
+# Inline code is read in bounded windows on one line: a force flag on the
+# line after push is not seen.
+row allow $'python3 <<\'EOF\'\nimport subprocess\nsubprocess.run(["git", "push",\n    "-f", "origin", "x"])\nEOF'
 
 # --- Command words the shell resolves another way -------------------------
 # Each class below once put a gated command past the rules: the rule saw a
@@ -562,8 +565,27 @@ row ask   "deno eval 'new Deno.Command(\"gh\", {stdout: \"piped\", env: {A: \"b\
 row ask   "deno eval 'new Deno.Command(\"gh\", {args: [\"-R\", \"o/r\", \"pr\", \"merge\", \"12\"]}).outputSync()'"
 row ask   "deno eval 'new Deno.Command(\"gh\", {args: [\"--repo\", \"o/r\", \"issue\", \"close\", \"5\"]}).outputSync()'"
 row ask   "deno eval 'new Deno.Command(\"niwa\", {cwd: \"x\", stdout: \"piped\", env: {A: \"b\"}, args: [\"reap\"]}).outputSync()'"
+# A longer options object before the args key, and a quoted git option value
+# holding a statement separator before push.
+row ask   "deno eval 'new Deno.Command(\"gh\", {cwd: \"x\", stdout: \"piped\", stderr: \"piped\", stdin: \"null\", clearEnv: true, env: {A: \"b\", C: \"d\"}, args: [\"pr\", \"merge\", \"12\"]}).outputSync()'"
+row ask   "deno eval 'new Deno.Command(\"niwa\", {cwd: \"x\", stdout: \"piped\", stderr: \"piped\", stdin: \"null\", clearEnv: true, env: {A: \"b\", C: \"d\"}, args: [\"reap\"]}).outputSync()'"
+row ask   "python3 -c 'import subprocess; subprocess.run([\"git\", \"-c\", \"a.b=x;y\", \"push\", \"-f\", \"origin\", \"x\"])'"
+row ask   "python3 -c 'import subprocess; subprocess.run([\"git\", \"-c\", \"a.b=x|y\", \"-c\", \"c.d=1&2\", \"push\", \"--force\", \"origin\", \"x\"])'"
+row ask   "python3 -c 'import os; os.system(\"git -c \\\"a.b=x;y\\\" push -f origin x\")'"
 # The words gh, pr and merge far apart in unrelated strings.
-row allow "python3 -c 'print(\"gh\"); print(\"one two three four five six seven eight nine ten eleven twelve\"); print(\"pr\", \"merge\")'"
+row allow "python3 -c 'print(\"gh\"); print(\"one two three four five six seven eight nine ten eleven twelve\"); print(\"thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty more words\"); print(\"pr\", \"merge\")'"
+# A gh, niwa or git call that is not the gated one, with a gated word later
+# in the code: the pair has to be adjacent, and only git options may sit
+# between git and push.
+row allow "python3 -c 'import subprocess; out = subprocess.run([\"gh\", \"pr\", \"list\"], capture_output=True).stdout; merge = out.strip(); print(merge)'"
+row allow "python3 -c 'import subprocess; subprocess.run([\"gh\", \"issue\", \"list\"]); close = [1, 2]; print(close)'"
+row allow "ruby -e 'system(\"gh\", \"release\", \"list\"); create = true; puts create'"
+row allow $'python3 <<\'EOF\'\nimport subprocess\nsubprocess.run(["niwa", "list"])\n# nothing here to reap yet\nEOF'
+row allow "node -e 'const r = require(\"child_process\").execSync(\"git rev-list --count HEAD\"); const a = []; a.push(Number(r) + 1); console.log(a)'"
+row allow "node -e 'const b = require(\"child_process\").execSync(\"git branch --show-current\"); const q = []; q.push(\"+\" + b, \"-f\")'"
+row allow "python3 -c 'import subprocess; subprocess.run([\"git\", \"status\"]); print(\"push\", \"-f\")'"
+row allow "python3 -c 'stats = {}; stats[\"push\"] = stats.get(\"push\", 0) + 1; print(stats)'"
+row allow "perl -e 'my %stats; \$stats{push} += 1; print \$stats{push}'"
 
 # Wrapper options read as getopt reads them: a cluster whose last letter
 # takes a value, or a long option that takes one without =, takes the next
