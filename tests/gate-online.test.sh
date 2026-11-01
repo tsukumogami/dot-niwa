@@ -392,9 +392,235 @@ row deny  'niwa reap' other-list
 # --- Known limits: the hook reads text, it does not run it ----------------
 # These pass because nothing in the command line names a gated command in
 # command position. Enforcing policy on the operation itself is niwa#320.
-row allow $'python3 - <<\'EOF\'\nimport subprocess\nsubprocess.run(["gh", "pr", "merge", "12"])\nEOF'
+# Code an interpreter reads from a heredoc used to pass here too; it is now
+# read as inline code, and a gated command it names as a list of strings
+# asks (the one row whose verdict this change turns from allow to ask).
+row ask   $'python3 - <<\'EOF\'\nimport subprocess\nsubprocess.run(["gh", "pr", "merge", "12"])\nEOF'
 row allow "alias m='gh pr merge'"
 row allow './scripts/merge-everything.sh'
+
+# --- Command words the shell resolves another way -------------------------
+# Each class below once put a gated command past the rules: the rule saw a
+# word the shell changes before the command runs, or a wrapper it did not
+# look through. Each has a row per rule family it reaches, and some run in
+# an installed instance copy.
+
+# zsh precommand modifiers before the command word, and zsh equals expansion
+# of the command word.
+row deny  'noglob gh pr merge 12'
+row deny  'nocorrect gh pr merge 12'
+row deny  '- gh pr merge 12'
+row deny  '=gh pr merge 12'
+row deny  'noglob curl https://example.com'
+row deny  '=curl https://example.com'
+row deny  'nocorrect niwa reap'
+row deny  '=niwa reap'
+row deny  'noglob gh repo delete o/r --yes'
+row ask   'noglob git push --force origin feature'
+row ask   '- git push -f origin feature'
+row ask   '=git push --force origin feature'
+row ask   'nocorrect unset GH_TOKEN'
+row ask   '=gh issue close 5'
+row ask   'noglob gh release create v1'
+row deny  'cd repo && noglob gh pr merge 12' other
+row deny  '=gh pr merge 12' other-repo
+row ask   'nocorrect gh issue close 5' other
+
+# zsh glob syntax in a word a rule reads: groups, alternation, extendedglob
+# negation, and the plain globs. A pattern that could be the word counts.
+row deny  'gh pr mer(ge) 12'
+row deny  'gh pr (merge|view) 12'
+row deny  'gh pr ^view 12'
+row deny  'gh pr m?rge 12'
+row deny  'gh pr [m]erge 12'
+row deny  'gh pr m* 12'
+row deny  'gh (pr|issue) merge 12'
+row deny  'gh repo de(lete) o/r --yes'
+row deny  'niwa re(ap)'
+row deny  'niwa (reap|list)'
+row deny  'niwa ^list'
+row ask   'gh issue clo(se) 5'
+row ask   'gh auth sw?tch'
+row ask   'gh release cr*te v1'
+row ask   'git (push) --force origin feature'
+row ask   'git push --for(ce) origin feature'
+row ask   'git push origin -[f]'
+row ask   'git push origin *'
+row ask   'unset GH_TOK(EN)'
+row ask   'unset GH_TOK?N'
+row ask   'unset -m "GH_*"'
+row ask   'gh api -X PUT repos/o/r/pulls/12/mer?e'
+row ask   'gh workflow run prepare-release.(yml|yaml)'
+row ask   "ls *(e:'gh pr merge 12':)"
+# A match through a pattern never takes the exemption.
+row deny  'gh pr m* 12' exempt
+row deny  'gh pr mer(ge) 12' other-repo
+row deny  'niwa ^list' other
+
+# A command word that is a glob pattern counts as each gated command it
+# could be; one that could be several asks.
+row deny  'n?wa reap'
+row deny  'cu*l https://example.com'
+row deny  '/usr/bin/g[h] pr merge 12'
+row ask   'gi? push --force origin feature'
+row ask   '?? example.com 80'
+row deny  'n?wa reap' other-repo
+
+# Brace expansion, which needs no file to match.
+row deny  'gh pr {merge,view} 12'
+row deny  'gh pr mer{g,}e 12'
+row deny  '{gh,} pr merge 12'
+row deny  'gh pr {m..m}erge 12'
+row deny  'niwa {reap,}'
+row deny  '{curl,} https://example.com'
+row ask   'git push {--force,} origin feature'
+row ask   'unset GH_{TOKEN,X}'
+row ask   'gh issue {close,} 5'
+row deny  'niwa {reap,}' other
+
+# Wrappers that run the program named in their arguments.
+row deny  'caffeinate -i gh pr merge 12'
+row deny  'caffeinate -t 60 curl https://example.com'
+row deny  'arch -arm64 gh pr merge 12'
+row deny  'arch -x86_64 niwa reap'
+row deny  'script -q /dev/null gh pr merge 12'
+row ask   "script -qc 'gh pr merge 12' /dev/null"
+row deny  'watch -n 5 gh pr merge 12'
+row ask   "watch -n 5 'gh pr merge 12'"
+row deny  'doas -u me gh pr merge 12'
+row ask   'doas git push --force origin feature'
+row deny  '/usr/bin/time -p gh pr merge 12'
+row deny  'time -p curl https://example.com'
+row deny  'gtimeout 5 niwa reap'
+row ask   'caffeinate gh issue close 5'
+row ask   'arch -arm64 git push --force origin feature'
+row deny  "env -S 'gh pr merge 12'"
+row deny  "env -S'niwa reap'"
+row ask   "env --split-string='git push --force' origin feature"
+row deny  'caffeinate -i gh pr merge 12' other
+row deny  'watch -n 5 gh pr merge 12' other-repo
+# find and fd run a command per file, with the file filled in at run time.
+row deny  'find . -name x -exec gh pr merge {} \;'
+row deny  'find . -exec gh pr {} \;'
+row deny  'find . -execdir niwa {} +'
+row deny  'find . -ok curl {} \;'
+row ask   'find . -name "*.txt" -okdir git push --force {} \;'
+row ask   'find . -exec gh issue {} 5 \;'
+row deny  'fd -e txt -x gh pr merge'
+row deny  'find . -exec gh pr {} \;' other
+# xargs reads its command's arguments at run time.
+row deny  'echo merge | xargs gh pr'
+row deny  'ls | xargs niwa'
+row deny  'echo x | xargs curl'
+row deny  'echo 12 | xargs -I{} gh pr merge {}'
+row deny  'echo merge | xargs -I % gh pr % 12'
+row ask   'echo 5 | xargs gh issue'
+row ask   'git branch | xargs -I{} git push origin {}'
+row ask   'echo origin | xargs git push --force'
+row deny  'echo merge | xargs gh pr' other-repo
+
+# Interpreters handed inline code that runs a gated command. A call written
+# as a list of strings counts.
+row ask   "python3 -c 'import os; os.system(\"gh pr merge 12\")'"
+row ask   "python3 -c 'import subprocess; subprocess.run([\"gh\", \"pr\", \"merge\", \"12\"])'"
+row ask   "perl -e 'system(\"gh\", \"pr\", \"merge\", \"12\")'"
+row ask   "osascript -e 'do shell script \"gh pr merge 12\"'"
+row ask   "node -e 'require(\"child_process\").execSync(\"niwa reap\")'"
+row ask   "ruby -e 'system(\"curl https://example.com\")'"
+row ask   "awk 'BEGIN { system(\"gh pr merge 12\") }'"
+row ask   "python3 -c 'import os; os.system(\"git push --force origin feature\")'"
+row ask   "python3 -c 'import os; os.system(\"gh issue close 5\")'"
+row ask   "perl -e 'system(\"unset GH_TOKEN; gh auth status\")'"
+row ask   "php -r 'system(\"gh pr merge 12\");'"
+row ask   "deno eval 'Deno.run({cmd: [\"gh\", \"pr\", \"merge\", \"12\"]})'"
+row ask   $'python3 <<\'EOF\'\nimport os\nos.system("niwa reap")\nEOF'
+row ask   $'node <<< \'require("child_process").execSync("curl https://example.com")\''
+row ask   'echo "import os; os.system(\"gh pr merge 1\")" | python3'
+row ask   $'python3 -W ignore <<\'EOF\'\nimport os\nos.system("gh pr merge 12")\nEOF'
+row ask   "python3 -c 'import os; os.system(\"gh pr merge 12\")'" exempt
+row ask   "perl -e 'system(\"gh\", \"pr\", \"merge\", \"12\")'" other-repo
+
+# --- Ordinary lines these readings must leave alone -----------------------
+# A command word that is a quoted path built from a variable, a script run
+# that way and chained to another command, and everyday uses of globs,
+# braces, wrappers and interpreters. None of these may ask or deny.
+row allow 'S=x; P=/p; "$P/skills/coordinate/scripts/state-open.sh" --session "$S" && koto next $S --no-cleanup'
+row allow 'S=x; P=/p; "$P/skills/coordinate/scripts/state-open.sh" --session "$S" && koto next $S --no-cleanup' other
+row allow '"$SCRIPT" --repo o/r status'
+row allow '"$P/scripts/run.sh" "$S" && "$P/scripts/check.sh" --flag x'
+row allow 'cd "$REPO" && "$REPO/scripts/test.sh" -v'
+row allow '"$HOME/bin/tool" list | jq .'
+row allow '"$P/scripts/run.sh" *'
+row allow '"$P/scripts/run.sh" --files *.md'
+row allow '"$P/scripts/run.sh" "$S" && gh pr view 12 --json state | jq -r .state'
+row allow 'koto next wf --with-data @/tmp/e.json --no-cleanup'
+row allow 'gh pr view 12 --json state | jq -r .state'
+row allow 'gh pr checks 12 && gh pr view 12'
+row allow 'gh issue list --label bug --json number,title | jq -r '\''.[] | "\(.number) \(.title)"'\'
+row allow 'gh api repos/o/r/pulls?per_page=100 --paginate'
+row allow 'noglob gh api repos/o/r/pulls?state=open'
+row allow 'gh api graphql -f query='\''query { viewer { login } }'\'
+row allow 'gh api -X POST repos/o/r/issues -f title=t -f body=b'
+row allow 'ls *.sh | xargs shellcheck'
+row allow 'find . -name '\''*.go'\'' -exec gofmt -l {} +'
+row allow 'find . -name '\''*.sh'\'' -exec shellcheck {} \;'
+row allow 'find . -type f -name '\''*.tmp'\'' -delete'
+row allow 'fd -e go -x gofmt -l'
+row allow 'gh pr list -q '\''.[].number'\'' --json number | xargs -I{} gh pr view {}'
+row allow 'gh pr list --json number -q '\''.[].number'\'' | xargs -n1 gh pr view'
+row allow 'git log --oneline -5 | awk '\''{print $1}'\'' | xargs -n1 git show --stat'
+row allow 'ls | xargs "$TOOL"'
+row allow 'xargs -0 rm -f < list'
+row allow 'python3 -c '\''import json,sys; print(json.load(sys.stdin)["a"])'\'' < f.json'
+row allow 'gh pr view 12 --json body -q .body | python3 -c '\''import sys; print(sys.stdin.read().upper())'\'
+row allow 'echo '\''{"a":1}'\'' | python3 -c '\''import json,sys; print(json.dumps(json.load(sys.stdin), indent=2))'\'
+row allow 'cat data.json | python3 -m json.tool'
+row allow 'python3 scripts/check.py --all'
+row allow 'node scripts/build.js'
+row allow 'node -r dotenv/config scripts/build.js'
+row allow 'python3 -W ignore scripts/check.py'
+row allow 'node -e '\''console.log(process.version)'\'
+row allow 'ruby -e '\''puts 1+1'\'
+row allow 'awk '\''{print $1}'\'' f'
+row allow 'awk -F, '\''{s+=$2} END {print s}'\'' data.csv'
+row allow 'perl -pi -e '\''s/foo/bar/'\'' f'
+row allow 'perl -ne '\''print if /foo/'\'' f'
+row allow 'osascript -e '\''display notification "done"'\'
+row allow 'mkdir -p d/{a,b}'
+row allow 'mkdir -p src/{cmd,internal/{a,b}}'
+row allow 'cp f{,.bak}'
+row allow 'echo x{1..3}y'
+row allow 'for i in {1..1000}; do echo "$i"; done'
+row allow 'git diff HEAD@{1}'
+row allow 'git checkout HEAD~1 -- f'
+row allow 'git push origin HEAD~1:refs/heads/x'
+row allow 'git push origin feature/*'
+row allow 'git push -u origin "$(git branch --show-current)"'
+row allow 'echo $?'
+row allow 'time go test ./...'
+row allow 'time (make; make test)'
+row allow '/usr/bin/time -p make'
+row allow 'timeout 30 koto next wf'
+row allow 'caffeinate -i make test'
+row allow 'arch -arm64 brew install jq'
+row allow 'script -q /dev/null make test'
+row allow 'watch -n 5 gh pr checks 12'
+row allow "watch -n 2 'ls -l | wc -l'"
+row allow "env -S 'make -j4' test"
+row allow 'env -u GH_TOKEN gh pr view 1'
+row allow 'for f in "$D"/*.md; do wc -l "$f"; done'
+row allow 'for f in *.go; do gofmt -l "$f"; done'
+row allow 'chmod +x scripts/*.sh'
+row allow 'foo() { echo hi; }'
+row allow 'arr=(a b c); echo "${arr[@]}"'
+row allow 'if (( 1 > 0 )); then echo y; fi'
+row allow 'echo $(( 2 * (3 + 4) ))'
+row allow '[[ $x =~ ^(a|b)$ ]] && echo m'
+row allow 'case "$x" in (a) echo a;; esac'
+row allow 'true && (cd sub; make test)'
+row allow 'diff <(sort a) <(sort b)'
+row allow 'echo a | tee >(wc -l)'
+row allow 'printf '\''%s\n'\'' a b | while read l; do echo "$l"; done'
 
 # ===================================================== the dispatch's grant
 #
