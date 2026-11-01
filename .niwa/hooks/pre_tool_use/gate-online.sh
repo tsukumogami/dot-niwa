@@ -19,11 +19,34 @@
 # command is not a gated command. The code is split into simple commands at
 # newlines, ; & | ( ) and at $( ) and backticks, including those inside double
 # quotes, which bash runs. Each simple command loses its leading VAR=value
-# words, shell keywords (if, then, do, !, {) and wrappers (command, env, exec,
-# sudo, nohup, time, timeout, nice, xargs, stdbuf, setsid), and its first
-# words are compared with the rules below. A gh command's two subcommand
-# words are found the way gh finds them, past any flag before each and the
-# value of -R or --repo, so gh pr -R o/r merge 12 is a merge. A gh api
+# words, shell keywords (if, then, do, !, {, repeat) and wrappers, and its
+# first words are compared with the rules below. The wrappers are command,
+# builtin, exec, env, sudo, doas, nohup, setsid, stdbuf, nice, time (the
+# keyword or the program, with its flags), timeout, gtimeout, caffeinate,
+# arch, script, watch and xargs, and zsh's precommand modifiers noglob,
+# nocorrect and -. A command name written with zsh's leading = (which zsh
+# replaces with the program's path) is read without it. find's -exec,
+# -execdir, -ok and -okdir actions and fd's -x and -X run a command too, and
+# that command is read the same way. env -S splits its value into the command
+# it runs, and that is read as well.
+#
+# The shell turns some words into others before a command sees them, and the
+# scanner does the same where it can. A brace list or range is expanded into
+# its words. A word holding an unquoted glob (* ? [...], zsh's parenthesized
+# groups and alternation, and the extendedglob forms ^ # ~) matches whatever
+# its pattern could match: in a place a rule reads a word (a gh subcommand,
+# niwa reap, git push and its force flags, the name unset is given), a pattern
+# that could be the word the rule wants counts as that word, and a command
+# name that is a pattern counts as each gated command it could be. Under
+# noglob nothing is a pattern. A word xargs or find fills in at run time can
+# be anything: xargs appends words to its command unless given a replace
+# string, and each word holding that string, or find's {}, is such a word.
+# A match that rests on a pattern or a run-time word never takes a grant or
+# the exemption.
+#
+# A gh command's two subcommand words are found the way gh finds them, past
+# any flag before each and the value of -R or --repo, so gh pr -R o/r merge
+# 12 is a merge. A gh api
 # call's method is its last -X or --method in any spelling and case; only an
 # explicit GET makes an endpoint a read, and no method flag counts as a write.
 # On the merge endpoint a lowercase GET attached to its flag (-Xget,
@@ -34,13 +57,33 @@
 # what a program does once it runs (a script calling the GitHub API, for
 # instance). Where it can tell that it cannot tell, it asks:
 #   - text handed to a shell (bash -c, sh -c, eval, a heredoc or here-string
-#     fed to a shell) that mentions a gated command;
+#     fed to a shell, the text watch runs, script -c) that mentions a gated
+#     command;
+#   - inline code handed to an interpreter (python -c, perl -e, ruby -e,
+#     node -e, osascript -e, php -r, lua -e, deno eval, and the code an
+#     interpreter reads from a heredoc, here-string or pipe when it is given
+#     no script) that mentions a gated command, read with its quotes and
+#     punctuation set aside, so a call written as a list of strings counts;
+#     an awk program counts when it also runs a command (system, getline or
+#     a pipe);
 #   - a command name that is itself an expansion ($GH pr merge);
+#   - a command name that is a glob pattern which could be several gated
+#     commands, or a wrapper running text that mentions one;
+#   - a glob pattern whose text mentions a gated command (a zsh glob
+#     qualifier can run code);
+#   - a brace expansion too large to expand, around a gated command;
 #   - a quote, $( or backtick that never closes, around text that mentions a
 #     gated command;
 #   - a workflow dispatch whose workflow it can't read (below);
 #   - a gh api call whose endpoint is wholly an expansion ("$EP") and that
-#     carries a method other than GET or a body flag.
+#     carries a method other than GET or a body flag;
+#   - a gh api call with a method other than GET or a body flag, one of whose
+#     words is a glob pattern or a word filled in at run time.
+# These fail closed because the scanner can't normalize them into one
+# command: it doesn't run the code, expand the pattern against the disk, or
+# know what xargs will read. Code that hides the command from plain reading
+# (built from pieces, encoded, read from a file) is out of reach, as a script
+# file is.
 #
 # Rules
 #   deny: gh pr merge, gh repo delete, gh api to pulls/<n>/merge or the
@@ -111,8 +154,9 @@
 # the most restrictive of the two: a grant never lifts a deny or an ask that
 # came from anything else in the command. A command the scanner can't read
 # (text handed to a shell, a command name that is an expansion, an unclosed
-# quote, a workflow selector or gh api endpoint it can't read) never takes a
-# grant or the exemption, so $GH pr merge asks even in a listed instance.
+# quote, a workflow selector or gh api endpoint it can't read, a match that
+# rests on a glob or a word given at run time) never takes a grant or the
+# exemption, so $GH pr merge asks even in a listed instance.
 #
 # A release workflow dispatch gets these verdicts too, so before it a session
 # niwa didn't dispatch is asked, as it is before gh release create.
@@ -180,26 +224,128 @@ BEGIN { RS = "\001" }
 
 # ---------------------------------------------------------------- scanning
 # env-print-guard.sh beside this hook carries a copy of this scanner, and the
-# part the two share matches: a fix to either belongs in both.
+# part the two share matches: a fix to either belongs in both. The copy does
+# not yet have the character mask, brace expansion and zsh glob groups below.
+#
+# Beside each word the scanner keeps a mask, one letter per character: "a"
+# for a character the shell acts on (unquoted, so it can be a glob or a
+# brace), "l" for one it takes literally (quoted, escaped, or the result of
+# an expansion). segm[s, k] holds it for word k of segment s.
 
-function addword() {
+function rep(ch, n,   r) {
+    r = ""
+    while (n > 0) { if (n % 2) r = r ch; ch = ch ch; n = int(n / 2) }
+    return r
+}
+
+function lit(t) { word = word t; wmask = wmask rep("l", length(t)) }
+
+function pushword(w, mk) {
+    segn[seg]++
+    segw[seg, segn[seg]] = w
+    segd[seg, segn[seg]] = wdyn
+    segm[seg, segn[seg]] = mk
+    # The command word of the segment, for telling a zsh glob group after it from
+    # a subshell.
+    if (seghd[seg] == "" && w !~ /^(!|\{|\}|if|then|else|elif|fi|do|done|while|until|time|coproc)$/ &&
+        w !~ /^[A-Za-z_][A-Za-z0-9_]*\+?=/) seghd[seg] = w
+}
+
+function addword(   b) {
     if (!wany) return
     if (redir_next) {
         redir_next = 0
     } else if (herestr_next) {
         body[seg] = body[seg] "\n" word
         herestr_next = 0
-    } else {
-        segn[seg]++
-        segw[seg, segn[seg]] = word
-        segd[seg, segn[seg]] = wdyn
+    } else if (index(wmask, "a") && index(word, "{")) {
+        braces(word, wmask)
+        for (b = 1; b <= nbr; b++) pushword(brw[b], brm[b])
+    } else pushword(word, wmask)
+    word = ""; wmask = ""; wany = 0; wdyn = 0
+}
+
+# Finds the first brace group in w (mask mk) the shell expands: unquoted
+# braces around a top-level comma or a range. Sets bj and bk to its braces
+# and returns 1, with bc[1..nbc] its top-level commas (none for a range).
+function bgroup(w, mk,   L, j, k, d, c) {
+    L = length(w)
+    for (j = 1; j <= L; j++) {
+        if (substr(w, j, 1) != "{" || substr(mk, j, 1) != "a") continue
+        d = 0; nbc = 0
+        for (k = j + 1; k <= L; k++) {
+            if (substr(mk, k, 1) != "a") continue
+            c = substr(w, k, 1)
+            if (c == "{") d++
+            else if (c == "}") { if (d == 0) break; d-- }
+            else if (c == "," && d == 0) bc[++nbc] = k
+        }
+        if (k > L) continue
+        bj = j; bk = k
+        if (nbc > 0) return 1
+        c = substr(w, j + 1, k - j - 1)
+        if (substr(mk, j + 1, k - j - 1) !~ /l/ &&
+            (c ~ /^-?[0-9]+\.\.-?[0-9]+(\.\.-?[0-9]+)?$/ || c ~ /^[A-Za-z]\.\.[A-Za-z](\.\.-?[0-9]+)?$/)) return 1
     }
-    word = ""; wany = 0; wdyn = 0
+    return 0
+}
+
+# Brace expansion of w (mask mk), in the order the shell uses, into
+# brw[1..nbr] and brm[1..nbr]. Words that expand to nothing are dropped.
+# Past a cap of 256 words braceover is set.
+function braces(w, mk,   sp, x, xm, pre, prm, suf, sum, k, r, lo, hi, step, n, alts, cs, p, q) {
+    nbr = 0; sp = 1; stw[1] = w; stm[1] = mk; n = 0
+    while (sp > 0) {
+        x = stw[sp]; xm = stm[sp]; sp--
+        if (!bgroup(x, xm)) {
+            if (x != "") { nbr++; brw[nbr] = x; brm[nbr] = xm }
+            continue
+        }
+        pre = substr(x, 1, bj - 1); prm = substr(xm, 1, bj - 1)
+        suf = substr(x, bk + 1); sum = substr(xm, bk + 1)
+        # The alternatives, first to last, pushed back in reverse so the
+        # first is expanded first.
+        alts = 0
+        if (nbc > 0) {
+            bc[0] = bj; bc[nbc + 1] = bk
+            for (k = 0; k <= nbc; k++) {
+                alts++
+                altw[alts] = substr(x, bc[k] + 1, bc[k + 1] - bc[k] - 1)
+                altm[alts] = substr(xm, bc[k] + 1, bc[k + 1] - bc[k] - 1)
+            }
+        } else {
+            r = substr(x, bj + 1, bk - bj - 1)
+            split(r, p, /\.\./)
+            step = (p[3] == "") ? 1 : p[3] + 0
+            if (step < 0) step = -step
+            if (step == 0) step = 1
+            cs = "ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz"
+            if (p[1] ~ /^[A-Za-z]$/) { lo = index(cs, p[1]); hi = index(cs, p[2]) }
+            else { lo = p[1] + 0; hi = p[2] + 0 }
+            for (q = lo; (lo <= hi) ? (q <= hi) : (q >= hi); q += (lo <= hi) ? step : -step) {
+                if (++alts > 256) break
+                altw[alts] = (p[1] ~ /^[A-Za-z]$/) ? substr(cs, q, 1) : q ""
+                altm[alts] = rep("a", length(altw[alts]))
+            }
+        }
+        n += alts
+        if (n > 256 || sp + alts > 256) {
+            # Past the cap: the words expanded so far stay, and the rest are
+            # kept as they stand.
+            braceover = 1
+            nbr++; brw[nbr] = x; brm[nbr] = xm
+            for (; sp > 0; sp--) { nbr++; brw[nbr] = stw[sp]; brm[nbr] = stm[sp] }
+            return
+        }
+        for (k = alts; k >= 1; k--) {
+            sp++; stw[sp] = pre altw[k] suf; stm[sp] = prm altm[k] sum
+        }
+    }
 }
 
 # A word made only of digits right before < or > is a file descriptor.
 function addword_fd() {
-    if (wany && word ~ /^[0-9]+$/) { word = ""; wany = 0; wdyn = 0; return }
+    if (wany && word ~ /^[0-9]+$/) { word = ""; wmask = ""; wany = 0; wdyn = 0; return }
     addword()
 }
 
@@ -214,9 +360,9 @@ function newseg() {
 function push(type) {
     fsp++
     ftype[fsp] = type; fmode[fsp] = mode; fseg[fsp] = seg
-    fword[fsp] = word; fwany[fsp] = wany; fwdyn[fsp] = wdyn; fdepth[fsp] = 0
+    fword[fsp] = word; fwmask[fsp] = wmask; fwany[fsp] = wany; fwdyn[fsp] = wdyn; fdepth[fsp] = 0
     fredir[fsp] = redir_next; fherestr[fsp] = herestr_next
-    word = ""; wany = 0; wdyn = 0; redir_next = 0; herestr_next = 0
+    word = ""; wmask = ""; wany = 0; wdyn = 0; redir_next = 0; herestr_next = 0
     mode = "c"
     seg = ++nseg
     segn[seg] = 0
@@ -225,7 +371,7 @@ function push(type) {
 function pop() {
     addword()
     seg = fseg[fsp]; mode = fmode[fsp]
-    word = fword[fsp] "$(...)"; wany = 1; wdyn = 1
+    word = fword[fsp] "$(...)"; wmask = fwmask[fsp] "llllll"; wany = 1; wdyn = 1
     redir_next = fredir[fsp]; herestr_next = fherestr[fsp]
     fsp--
 }
@@ -289,19 +435,60 @@ function dollar(   nx, rest, j) {
         rest = substr(src, i)
         j = index(rest, "}")
         if (!j) j = length(rest)
-        word = word substr(rest, 1, j); wany = 1; wdyn = 1
+        lit(substr(rest, 1, j)); wany = 1; wdyn = 1
         i += j
+    } else if (nx != "" && index("?#@*!$-0123456789", nx)) {
+        # A special parameter: $? is a status, not a glob.
+        lit("$" nx); wany = 1; wdyn = 1
+        i += 2
     } else {
-        word = word "$"; wany = 1; wdyn = 1
+        lit("$"); wany = 1; wdyn = 1
         i++
     }
+}
+
+# Called with i on "(" in code. In zsh a parenthesized group inside a word,
+# or as an argument after the command word, is a glob group: read it into
+# the word, its parentheses and | active, and return 1. Anything else (a
+# subshell, a function definition, an array assignment, a group that never
+# closes on its line or holds only blanks) returns 0 and is read as before.
+function globparen(   k, d, ch, t, tm, q, j) {
+    if (substr(src, i + 1, 1) == ")") return 0
+    if (wany) { if (word ~ /=$/ || word == "!") return 0 }
+    else if (seghd[seg] == "" || seghd[seg] ~ /^(for|select|case|foreach|function|repeat|\[\[|\[|test|coproc)$/) return 0
+    k = i; d = 0; t = ""; tm = ""
+    while (k <= n) {
+        ch = substr(src, k, 1)
+        if (ch == "\n") break
+        if (ch == "\047") {
+            q = substr(src, k + 1); j = index(q, "\047")
+            if (!j) break
+            t = t substr(q, 1, j - 1); tm = tm rep("l", j - 1); k += j + 1
+            continue
+        }
+        if (ch == "\"") {
+            for (j = k + 1; j <= n && substr(src, j, 1) != "\""; j++)
+                if (substr(src, j, 1) == "\\") j++
+            if (j > n) break
+            t = t substr(src, k + 1, j - k - 1); tm = tm rep("l", j - k - 1); k = j + 1
+            continue
+        }
+        if (ch == "\\") { t = t substr(src, k + 1, 1); tm = tm "l"; k += 2; continue }
+        t = t ch; tm = tm "a"; k++
+        if (ch == "(") d++
+        else if (ch == ")" && --d == 0) break
+    }
+    if (d != 0 || t ~ /^\([ \t]*\)$/) return 0
+    word = word t; wmask = wmask tm; wany = 1
+    i = k
+    return 1
 }
 
 function scan(   c, nx, rest, j, k) {
     n = length(src)
     mode = "c"; fsp = 0; nph = 0; nseg = 0; unclosed = 0
     seg = ++nseg; segn[seg] = 0
-    word = ""; wany = 0; wdyn = 0
+    word = ""; wmask = ""; wany = 0; wdyn = 0
     i = 1
     while (i <= n) {
         c = substr(src, i, 1)
@@ -310,24 +497,24 @@ function scan(   c, nx, rest, j, k) {
             else if (c == "\\") {
                 nx = substr(src, i + 1, 1)
                 if (nx == "\n") i += 2
-                else if (nx ~ /[$`"\\]/) { word = word nx; i += 2 }
-                else { word = word c; i++ }
+                else if (nx ~ /[$`"\\]/) { word = word nx; wmask = wmask "l"; i += 2 }
+                else { word = word c; wmask = wmask "l"; i++ }
             }
             else if (c == "`") { push("tick"); i++ }
             else if (c == "$") dollar()
-            else { word = word c; i++ }
+            else { word = word c; wmask = wmask "l"; i++ }
             continue
         }
         # code
         if (c == "\\") {
             nx = substr(src, i + 1, 1)
-            if (nx != "\n") { word = word nx; wany = 1 }
+            if (nx != "\n") { lit(nx); wany = 1 }
             i += 2
         } else if (c == "\047") {
             rest = substr(src, i + 1)
             j = index(rest, "\047")
-            if (!j) { word = word rest; wany = 1; unclosed = 1; i = n + 1 }
-            else { word = word substr(rest, 1, j - 1); wany = 1; i += j + 1 }
+            if (!j) { lit(rest); wany = 1; unclosed = 1; i = n + 1 }
+            else { lit(substr(rest, 1, j - 1)); wany = 1; i += j + 1 }
         } else if (c == "\"") {
             mode = "d"; wany = 1; i++
         } else if (c == "$" && substr(src, i + 1, 1) == "\047") {
@@ -335,7 +522,7 @@ function scan(   c, nx, rest, j, k) {
             k = i + 2
             while (k <= n && substr(src, k, 1) != "\047") k += (substr(src, k, 1) == "\\") ? 2 : 1
             if (k > n) unclosed = 1
-            word = word substr(src, i + 2, k - i - 2); wany = 1
+            lit(substr(src, i + 2, k - i - 2)); wany = 1
             i = k + 1
         } else if (c == "$") {
             dollar()
@@ -361,6 +548,7 @@ function scan(   c, nx, rest, j, k) {
                 redir_next = 1
             } else { newseg(); i++ }
         } else if (c == "(") {
+            if (globparen()) continue
             newseg()
             if (fsp > 0 && ftype[fsp] == "paren") fdepth[fsp]++
             i++
@@ -384,7 +572,7 @@ function scan(   c, nx, rest, j, k) {
                 redir_next = 1
             }
         } else {
-            word = word c; wany = 1; i++
+            word = word c; wmask = wmask "a"; wany = 1; i++
         }
     }
     addword()
@@ -401,6 +589,98 @@ function mentions(t) {
            t ~ /actions\/workflows\/[^ \t\n]*\/dispatches/ ||
            t ~ /(^|[^A-Za-z0-9_.-])(curl|wget|nc|ncat|netcat)([ \t\n]|$)/ ||
            t ~ /push[ \t]([^\n;&|]*[ \t])?(--force|-[A-Za-z]*f[A-Za-z]*([ \t\n;&|]|$)|\+)/
+}
+
+# Code with its quotes and punctuation turned into blanks, so a call written
+# as a list of strings reads as the command it names.
+function loosen(t) {
+    gsub(/[^A-Za-z0-9_.\/+=\n-]/, " ", t)
+    return t
+}
+
+function esc(c) {
+    if (c ~ /[.[*+?(){}|$]/) return "[" c "]"
+    if (c == "\\") return "[\\\\]"
+    if (c == "^") return "\\^"
+    return c
+}
+
+# The glob in word w (mask mk) as an anchored regular expression matching at
+# least what the glob could match. Sets gglob to 1 when w holds an active
+# glob at all; a word without one is a plain word. Forms read: * ? [...]
+# (read as any one character), zsh groups with | (an empty branch read as
+# .?), and the extendedglob forms
+# x# (read as .*), ^ negation (read as anything up to the next / ) or |),
+# a~b (read as a) and (#...) flags (read as anything).
+function gre(w, mk,   L, j, c, out, d, e, cl, k, kd) {
+    L = length(w); out = ""; d = 0; gglob = 0
+    for (j = 1; j <= L; j++) {
+        c = substr(w, j, 1)
+        if (substr(mk, j, 1) != "a") { out = out esc(c); continue }
+        if (c == "*") { out = out ".*"; gglob = 1 }
+        else if (c == "?") { out = out "."; gglob = 1 }
+        else if (c == "#") { out = out ".*"; gglob = 1 }
+        else if (c == "[") {
+            e = j + 1
+            if (substr(w, e, 1) == "!" || substr(w, e, 1) == "^") e++
+            if (substr(w, e, 1) == "]") e++
+            while (e <= L && substr(w, e, 1) != "]") e++
+            if (e > L) { out = out esc(c); continue }
+            # Any one character: wider than the set, and never a malformed
+            # expression.
+            out = out "."; gglob = 1; j = e
+        }
+        else if (c == "(") {
+            if (substr(w, j + 1, 1) == "#") { gglob = 1; return "^.*$" }
+            out = out "("; d++; gglob = 1
+        }
+        else if (c == ")" && d > 0) { if (out ~ /[(|]$/) out = out ".?"; out = out ")"; d-- }
+        else if (c == "|" && d > 0) { if (out ~ /[(|]$/) out = out ".?"; out = out "|" }
+        else if (c == "^" && (j == 1 || substr(w, j - 1, 1) ~ /[\/(|]/)) {
+            out = out ".*"; gglob = 1; kd = 0
+            for (k = j + 1; k <= L; k++) {
+                if (substr(w, k, 1) == "/" && kd == 0) break
+                if (substr(mk, k, 1) != "a") continue
+                if (substr(w, k, 1) == "(") kd++
+                else if (substr(w, k, 1) == ")") { if (kd == 0) break; kd-- }
+                else if (substr(w, k, 1) == "|" && kd == 0) break
+            }
+            j = k - 1
+        }
+        else if (c == "~" && j > 1) { gglob = 1; break }
+        else out = out esc(c)
+    }
+    for (; d > 0; d--) { if (out ~ /[(|]$/) out = out ".?"; out = out ")" }
+    return "^" out "$"
+}
+
+# Whether word k of segment s is a glob pattern (never under noglob, nor on
+# the strict path a command name that is an expansion takes).
+function isglob(s, k) {
+    if (strict || noglob || !index(segm[s, k], "a")) return 0
+    gre(segw[s, k], segm[s, k])
+    return gglob
+}
+
+# Whether word k of segment s can be the word lt: 1 when it is, 2 when it
+# could be (a glob that could match it, or a word filled in at run time), 0
+# when it cannot. On the strict path only the word itself counts.
+function kw(s, k, lt,   re) {
+    if (segx[s, k]) return strict ? 0 : 2
+    if (segw[s, k] == lt) return 1
+    if (strict || noglob || !index(segm[s, k], "a")) return 0
+    re = gre(segw[s, k], segm[s, k])
+    return (gglob && lt ~ re) ? 2 : 0
+}
+
+# Words i1 and i2 (each at most m) can be l1 and l2; sets guessed when
+# either only could be.
+function pair(s, i1, l1, i2, l2, m,   r1, r2) {
+    if (i1 > m || i2 > m) return 0
+    if (!(r1 = kw(s, i1, l1))) return 0
+    if (!(r2 = kw(s, i2, l2))) return 0
+    if (r1 == 2 || r2 == 2) guessed = 1
+    return 1
 }
 
 # Three verdicts are kept, each the most restrictive seen so far, first
@@ -486,32 +766,35 @@ function dispatch(w, dyn) {
 # Rules for command head h whose arguments are segw[s, a..m].
 # Sets rd, rr and ra (the authority a grant would need, or ""), and rrelease
 # for a release workflow dispatch; returns 1 on a match.
-function rules(s, h, a, m,   x, k, sub1, sub2, meth, t, n, w, wd, merge, ep, writes, lx) {
+function rules(s, h, a, m,   x, k, meth, t, n, w, wd, merge, ep, writes, lx, r, mp, pat) {
     rd = ""; rr = ""; ra = ""; rrelease = 0
     if (h ~ /^(curl|wget|nc|ncat|netcat)$/) { rd = "deny"; rr = h; return 1 }
     if (h == "gh") {
+        # Each subcommand word is compared through kw(): a glob that could
+        # be the word, or a word given at run time, counts (and sets
+        # guessed).
         ghsub(s, a, m)
-        sub1 = (g1 <= m) ? segw[s, g1] : ""; sub2 = (g2 <= m) ? segw[s, g2] : ""
-        if (sub1 == "pr" && sub2 == "merge")        { rd = "deny"; rr = "gh pr merge"; ra = "merge-pr" }
-        else if (sub1 == "repo" && sub2 == "delete") { rd = "deny"; rr = "gh repo delete" }
-        else if (sub1 == "auth" && sub2 == "switch") { rd = "ask";  rr = "gh auth switch" }
-        else if (sub1 == "release" && sub2 == "create") { rd = "ask"; rr = "gh release create"; ra = "cut-release" }
-        else if (sub1 == "issue" && sub2 == "close") { rd = "ask";  rr = "gh issue close"; ra = "close-issue" }
-        else if (sub1 == "workflow" && sub2 == "run") {
+        if (pair(s, g1, "pr", g2, "merge", m))        { rd = "deny"; rr = "gh pr merge"; ra = "merge-pr" }
+        else if (pair(s, g1, "repo", g2, "delete", m)) { rd = "deny"; rr = "gh repo delete" }
+        else if (pair(s, g1, "auth", g2, "switch", m)) { rd = "ask";  rr = "gh auth switch" }
+        else if (pair(s, g1, "release", g2, "create", m)) { rd = "ask"; rr = "gh release create"; ra = "cut-release" }
+        else if (pair(s, g1, "issue", g2, "close", m)) { rd = "ask";  rr = "gh issue close"; ra = "close-issue" }
+        else if (pair(s, g1, "workflow", g2, "run", m)) {
             # The selector is the one word left after the flags and the
             # values of the flags that take one; none, or two or more, can
-            # not be read.
+            # not be read, nor can a glob or a word given at run time.
             n = 0
             for (k = g2 + 1; k <= m; k++) {
                 x = segw[s, k]
                 if (x ~ /^(-r|--ref|-R|--repo|-f|--raw-field|-F|--field)$/) { k++; continue }
                 if (x ~ /^-/) continue
-                n++; w = x; wd = segd[s, k]
+                n++; w = x; wd = segd[s, k] || (!strict && segx[s, k]) || isglob(s, k)
             }
             if (n != 1) { rd = "ask"; rr = "workflow dispatch whose workflow can\047t be read" }
             else dispatch(w, wd)
         }
-        else if (sub1 == "api") {
+        else if (g1 <= m && (r = kw(s, g1, "api"))) {
+            if (r == 2) guessed = 1
             meth = ghmethod(s, g1 + 1, m)
             merge = ""
             for (k = g1 + 1; k <= m; k++) {
@@ -556,13 +839,23 @@ function rules(s, h, a, m,   x, k, sub1, sub2, meth, t, n, w, wd, merge, ep, wri
                 if (ep && segd[s, ep] && segw[s, ep] ~ /^\$(\{[^}]*\}|[A-Za-z_][A-Za-z0-9_]*|[0-9@*]|\(\.\.\.\))$/ && (meth != "" || writes)) {
                     rd = "ask"; rr = "gh api write to an endpoint that can\047t be read"
                 }
+                # A call that may write, one of whose words is a glob or a
+                # word given at run time, could name any endpoint.
+                pat = 0
+                for (k = g1 + 1; k <= m; k++) if ((!strict && segx[s, k]) || isglob(s, k)) pat = 1
+                if (rd == "" && pat && (meth != "" || writes)) {
+                    rd = "ask"; rr = "gh api write whose arguments hold a glob or a word given at run time"
+                }
             }
         }
         return rd != ""
     }
     if (h == "niwa") {
         for (k = a; k <= m; k++) if (segw[s, k] !~ /^-/) break
-        if (k <= m && segw[s, k] == "reap") { rd = "deny"; rr = "niwa reap"; return 1 }
+        if (k <= m && (r = kw(s, k, "reap"))) {
+            if (r == 2) guessed = 1
+            rd = "deny"; rr = "niwa reap"; return 1
+        }
         return 0
     }
     if (h == "git") {
@@ -571,80 +864,329 @@ function rules(s, h, a, m,   x, k, sub1, sub2, meth, t, n, w, wd, merge, ep, wri
             if (x ~ /^(-C|-c|--git-dir|--work-tree|--namespace|--exec-path|--super-prefix|--config-env)$/) k++
             else if (x !~ /^-/) break
         }
-        if (k > m || segw[s, k] != "push") return 0
+        if (k > m || !(r = kw(s, k, "push"))) return 0
         for (k++; k <= m; k++) {
             x = segw[s, k]
             if (x ~ /^--force/ || x ~ /^-[A-Za-z]*f[A-Za-z]*$/ || x ~ /^\+/) {
+                if (r == 2) guessed = 1
+                rd = "ask"; rr = "git push --force"; return 1
+            }
+            # A pattern that could be a force flag or a +refspec, or starts
+            # with a glob (so could be any name on disk), or a word filled in
+            # at run time.
+            if ((!strict && segx[s, k]) || (isglob(s, k) && (substr(segm[s, k], 1, 1) == "a" && x ~ /^[*?[(^#]/ ||
+                x ~ /^-[^-]/ || "-f" ~ gre(x, segm[s, k]) || "--force" ~ gre(x, segm[s, k]) ||
+                "--force-with-lease" ~ gre(x, segm[s, k])))) {
+                guessed = 1
                 rd = "ask"; rr = "git push --force"; return 1
             }
         }
         return 0
     }
     if (h == "unset") {
-        for (k = a; k <= m; k++) if (segw[s, k] ~ /^GH_TOKEN/) { rd = "ask"; rr = "unset GH_TOKEN"; return 1 }
+        mp = 0
+        for (k = a; k <= m; k++) {
+            x = segw[s, k]
+            if (x == "-m") { mp = 1; continue }
+            if (x ~ /^GH_TOKEN/) { rd = "ask"; rr = "unset GH_TOKEN"; return 1 }
+            # zsh unset -m takes patterns, quoted or not.
+            if ((!strict && segx[s, k]) || (mp && "GH_TOKEN" ~ gre(x, rep("a", length(x)))) ||
+                (isglob(s, k) && "GH_TOKEN" ~ gre(x, segm[s, k]))) {
+                guessed = 1
+                rd = "ask"; rr = "unset GH_TOKEN"; return 1
+            }
+        }
         return 0
     }
-    if (h ~ /^(bash|sh|zsh|dash|ksh|eval)$/) {
+    if (h ~ /^(bash|sh|zsh|dash|ksh|mksh|fish|csh|tcsh|pwsh|eval)$/) {
         t = body[s]
         for (k = a; k <= m; k++) t = t " " segw[s, k]
         if (h != "eval" && a > m && body[s] == "") t = src   # reads the script from a pipe
         if (mentions(t)) { rd = "ask"; rr = "text handed to " h " mentions a gated command"; return 1 }
+        return 0
+    }
+    return interp(s, h, a, m)
+}
+
+# Inline code handed to an interpreter: the code after its inline flag (the
+# rest of the words are taken with it), or, given no inline flag and no
+# script, what it reads from a heredoc, here-string or pipe. A script file
+# is not read. Asks when the code mentions a gated command, plain or with
+# its punctuation set aside; awk only when the program also runs a command.
+function interp(s, h, a, m,   f, k, x, t, inl, pos, fileprog) {
+    if (h ~ /^(python[0-9.]*|pypy[0-9.]*)$/) f = "py"
+    else if (h ~ /^(perl[0-9.]*|ruby[0-9.]*)$/) f = "pe"
+    else if (h ~ /^(node|nodejs|bun)$/) f = "js"
+    else if (h == "deno") f = "deno"
+    else if (h == "osascript") f = "osa"
+    else if (h ~ /^php[0-9.]*$/) f = "php"
+    else if (h ~ /^(lua[0-9.]*|luajit|Rscript)$/) f = "lua"
+    else if (h ~ /^(awk|gawk|mawk|nawk)$/) f = "awk"
+    else return 0
+    inl = 0; pos = 0; fileprog = 0; t = ""
+    for (k = a; k <= m; k++) {
+        x = segw[s, k]
+        t = t " " x
+        if (f == "py" && x ~ /^-[A-Za-z]*c/) inl = 1
+        else if (f == "pe" && x ~ /^-[A-Za-z0-9]*[eE]/) inl = 1
+        else if (f == "js" && x ~ /^(-[A-Za-z]*[ep]|--eval|--print)/) inl = 1
+        else if (f == "deno" && k == a && x == "eval") inl = 1
+        else if (f == "osa" && x == "-e") inl = 1
+        else if (f == "php" && x ~ /^-[A-Za-z]*r/) inl = 1
+        else if (f == "lua" && x == "-e") inl = 1
+        else if (f == "awk" && x ~ /^(-f|--file)/) fileprog = 1
+        else if ((f == "py" && x ~ /^-[WX]$/) || (f == "js" && x ~ /^(-r|--require|--import|--loader)$/) ||
+            (f == "awk" && x ~ /^-[Fv]$/)) { k++; if (k <= m) t = t " " segw[s, k] }
+        else if (x !~ /^-/) pos = 1
+    }
+    if (f == "awk") {
+        if (fileprog || !pos) return 0
+        if (t !~ /system|getline|\|/) return 0
+    } else if (!inl) {
+        if (pos) return 0
+        t = (body[s] != "") ? body[s] : src
+    }
+    if (mentions(t) || mentions(loosen(t))) {
+        rd = "ask"; rr = "inline code handed to " h " mentions a gated command"; return 1
     }
     return 0
 }
 
-function evalseg(s,   m, k, x, h, g) {
+# A copy of words a..m of segment s as a segment of its own, for a command
+# a wrapper runs; its name is never a number, so END does not read it again.
+function synth(s, a, m,   ns, k, n) {
+    ns = "x" (++nsyn); n = 0
+    for (k = a; k <= m; k++) {
+        n++
+        segw[ns, n] = segw[s, k]; segd[ns, n] = segd[s, k]
+        segm[ns, n] = segm[s, k]; segx[ns, n] = segx[s, k]
+    }
+    segn[ns] = n; body[ns] = body[s]
+    return ns
+}
+
+# Adds a word filled in at run time to the end of segment ns.
+function runword(ns,   n) {
+    n = ++segn[ns]
+    segw[ns, n] = ""; segd[ns, n] = 0; segm[ns, n] = ""; segx[ns, n] = 1
+}
+
+# The command name in word k of segment s: its last path part, less a
+# leading = (zsh replaces =name with the path of the program). Sets hm to its
+# mask.
+function headname(s, k,   x, mk) {
+    x = segw[s, k]; mk = segm[s, k]
+    if (substr(x, 1, 1) == "=" && substr(mk, 1, 1) == "a") { x = substr(x, 2); mk = substr(mk, 2) }
+    if (match(x, /.*\//)) { x = substr(x, RLENGTH + 1); mk = substr(mk, RLENGTH + 1) }
+    hm = mk
+    return x
+}
+
+function evalseg(s,   m, k) {
+    noglob = 0
     m = segn[s]
-    k = 1
+    # A zsh glob qualifier can run code: a glob group whose text mentions a
+    # gated command asks.
+    for (k = 1; k <= m; k++)
+        if (actin(segw[s, k], segm[s, k], "(") && mentions(segw[s, k]))
+            verdict("ask", "glob pattern mentions a gated command")
+    evalcmd(s, 1, m)
+}
+
+# Whether w (mask mk) holds an active character c.
+function actin(w, mk, c,   j) {
+    for (j = index(w, c); j > 0 && j <= length(w); j++)
+        if (substr(w, j, 1) == c && substr(mk, j, 1) == "a") return 1
+    return 0
+}
+
+# Text a wrapper hands to a shell.
+function shelltext(name, t) {
+    if (mentions(t)) verdict("ask", "text handed to " name " mentions a gated command")
+}
+
+# Reads the command in words k..m of segment s.
+function evalcmd(s, k, m,   x, h, g, j, e, t, ns, n, rs, ng, ph) {
     while (k <= m) {
+        if (segx[s, k]) break
         x = segw[s, k]
-        if (x ~ /^(!|\{|\}|if|then|else|elif|fi|do|done|while|until|time|coproc)$/) { k++; continue }
+        if (x ~ /^(!|\{|\}|if|then|else|elif|fi|do|done|while|until|coproc)$/) { k++; continue }
         if (x ~ /^(for|select|case|\[\[|\[|test)$/) return
-        if (x == "function") { k += 2; continue }
+        if (x == "function" || x == "repeat") { k += 2; continue }
         if (x ~ /^[A-Za-z_][A-Za-z0-9_]*\+?=/) { k++; continue }
-        h = x; sub(/.*\//, "", h)
-        if (h ~ /^(command|builtin|exec|nohup|setsid|stdbuf)$/) {
+        h = headname(s, k)
+        if (h ~ /^(command|builtin|exec|nohup|setsid|nocorrect|-)$/) {
             for (k++; k <= m && segw[s, k] ~ /^-/; k++) if (segw[s, k] == "-a") k++
             continue
         }
+        if (h == "noglob") { noglob = 1; k++; continue }
+        if (h == "stdbuf") {
+            for (k++; k <= m && segw[s, k] ~ /^-/; k++) if (segw[s, k] ~ /^-[ioe]$/) k++
+            continue
+        }
         if (h == "env") {
-            for (k++; k <= m && (segw[s, k] ~ /^-/ || segw[s, k] ~ /^[A-Za-z_][A-Za-z0-9_]*=/); k++)
-                if (segw[s, k] ~ /^(-u|-C|--unset|--chdir)$/) k++
+            for (k++; k <= m && (segw[s, k] ~ /^-/ || segw[s, k] ~ /^[A-Za-z_][A-Za-z0-9_]*=/); k++) {
+                x = segw[s, k]
+                if (x ~ /^(-u|-C|-P|--unset|--chdir)$/) k++
+                else if (x ~ /^(-S|--split-string)$/ || x ~ /^(-S.|--split-string=)/) {
+                    # The value is split at blanks into the command and its
+                    # first words; the words after it follow.
+                    if (x ~ /^(-S|--split-string)$/) { t = (k < m) ? segw[s, k + 1] : ""; k++ }
+                    else if (x ~ /^-S/) t = substr(x, 3)
+                    else t = substr(x, 16)
+                    ns = "x" (++nsyn); n = 0
+                    while (match(t, /[^ \t\n]+/)) {
+                        n++
+                        segw[ns, n] = substr(t, RSTART, RLENGTH); segd[ns, n] = (segw[ns, n] ~ /\$/)
+                        segm[ns, n] = rep("l", RLENGTH); segx[ns, n] = 0
+                        t = substr(t, RSTART + RLENGTH)
+                    }
+                    for (k++; k <= m; k++) {
+                        n++
+                        segw[ns, n] = segw[s, k]; segd[ns, n] = segd[s, k]
+                        segm[ns, n] = segm[s, k]; segx[ns, n] = segx[s, k]
+                    }
+                    segn[ns] = n; body[ns] = body[s]
+                    evalcmd(ns, 1, n)
+                    return
+                }
+            }
             continue
         }
         if (h == "sudo") {
             for (k++; k <= m && segw[s, k] ~ /^-/; k++) if (segw[s, k] ~ /^-[ugCDhprtUT]$/) k++
             continue
         }
+        if (h == "doas") {
+            for (k++; k <= m && segw[s, k] ~ /^-/; k++) if (segw[s, k] ~ /^-[auC]$/) k++
+            continue
+        }
         if (h == "nice") {
             for (k++; k <= m && segw[s, k] ~ /^-/; k++) if (segw[s, k] == "-n") k++
             continue
         }
-        if (h == "timeout") {
+        if (h == "timeout" || h == "gtimeout") {
             for (k++; k <= m && segw[s, k] ~ /^-/; k++) if (segw[s, k] ~ /^(-s|-k)$/) k++
             k++
             continue
         }
-        if (h == "xargs") {
-            for (k++; k <= m && segw[s, k] ~ /^-/; k++) if (segw[s, k] ~ /^-[aEdILnPs]$/) k++
+        if (h == "time") {
+            for (k++; k <= m && segw[s, k] ~ /^-/; k++) if (segw[s, k] ~ /^(-o|-f|--output|--format)$/) k++
             continue
+        }
+        if (h == "caffeinate") {
+            for (k++; k <= m && segw[s, k] ~ /^-/; k++) if (segw[s, k] ~ /^-[tw]$/) k++
+            continue
+        }
+        if (h == "arch") {
+            for (k++; k <= m && segw[s, k] ~ /^-/; k++) if (segw[s, k] ~ /^(-arch|-e|-d)$/) k++
+            continue
+        }
+        if (h == "script") {
+            # -c (Linux) hands its value to a shell; otherwise the words
+            # after the flags are the typescript file, then the command
+            # (macOS).
+            for (k++; k <= m && segw[s, k] ~ /^-/; k++) {
+                x = segw[s, k]
+                if (x ~ /^-[A-Za-z]*c$/ || x == "--command") { shelltext("script", (k < m) ? segw[s, k + 1] : ""); return }
+                if (x ~ /^--command=/) { shelltext("script", substr(x, 11)); return }
+                if (x ~ /^-[tTIOBEo]$/ || x ~ /^--(log-in|log-out|log-io|log-timing|echo|output-limit|logging-format)$/) k++
+            }
+            k++
+            continue
+        }
+        if (h == "watch") {
+            # The words after the flags are joined and handed to sh -c.
+            for (k++; k <= m && segw[s, k] ~ /^-/; k++) if (segw[s, k] ~ /^(-n|--interval|-q|--equexit)$/) k++
+            t = ""
+            for (j = k; j <= m; j++) t = t " " segw[s, j]
+            shelltext("watch", t)
+            continue
+        }
+        if (h == "xargs") {
+            rs = ""
+            for (k++; k <= m && segw[s, k] ~ /^-/; k++) {
+                x = segw[s, k]
+                if (x ~ /^-[IJ]$/) { rs = (k < m) ? segw[s, k + 1] : ""; k++ }
+                else if (x ~ /^-[aEdLnPsRS]$/ || x ~ /^--(arg-file|delimiter|eof|max-args|max-lines|max-procs|max-chars|process-slot-var)$/) k++
+                else if (x ~ /^-I./) rs = substr(x, 3)
+                else if (x == "-i" || x == "--replace") rs = "{}"
+                else if (x ~ /^-i./) rs = substr(x, 3)
+                else if (x ~ /^--replace=/) rs = substr(x, 11)
+            }
+            if (k > m) return
+            # Read from input at run time: words holding the replace string,
+            # or, without one, words appended to the command.
+            ns = synth(s, k, m)
+            if (rs != "") { for (j = 1; j <= segn[ns]; j++) if (index(segw[ns, j], rs)) segx[ns, j] = 1 }
+            else { runword(ns); runword(ns) }
+            evalcmd(ns, 1, segn[ns])
+            return
         }
         break
     }
     if (k > m) return
     x = segw[s, k]
-    h = x; sub(/.*\//, "", h)
-    if (segd[s, k] && x ~ /\$/) {
+    h = headname(s, k)
+    if (segx[s, k] || (segd[s, k] && x ~ /\$/)) {
         # The command name is an expansion: ask if a gated command would fit.
         # No grant and no exemption reaches a command the scanner cannot read.
         split("gh niwa git", g, " ")
-        for (x = 1; x <= 3; x++)
-            if (rules(s, g[x], k + 1, m)) { verdict("ask", "command name is not literal; would be " rr); return }
+        strict = 1
+        for (j = 1; j <= 3; j++)
+            if (rules(s, g[j], k + 1, m)) { strict = 0; verdict("ask", "command name is not literal; would be " rr); return }
+        strict = 0
         return
     }
+    if (h == "find" || h == "fd" || h == "fdfind") {
+        # The -exec, -execdir, -ok and -okdir actions of find run the words up to ; or +,
+        # with {} filled in. The -x and -X of fd run the rest, up to ;, with its
+        # placeholders filled in, or the path appended when there is none.
+        for (j = k + 1; j <= m; j++) {
+            if (h == "find" && segw[s, j] !~ /^-(exec|execdir|ok|okdir)$/) continue
+            if (h != "find" && segw[s, j] !~ /^(-x|--exec|-X|--exec-batch)$/) continue
+            for (e = j + 1; e <= m && segw[s, e] != ";" && (h != "find" || segw[s, e] != "+"); e++) { }
+            ns = synth(s, j + 1, e - 1); ph = 0
+            for (n = 1; n <= segn[ns]; n++)
+                if (segw[ns, n] ~ /[{](\/|\/\/|\.|\/\.)?[}]/) { segx[ns, n] = 1; ph = 1 }
+            if (h != "find" && !ph) runword(ns)
+            ng = noglob; evalcmd(ns, 1, segn[ns]); noglob = ng
+            j = e
+        }
+        return
+    }
+    if (!noglob && index(hm, "a")) {
+        gre(h, hm)
+        if (gglob) { globhead(s, k, m, gre(h, hm)); return }
+    }
+    guessed = 0
     if (rules(s, h, k + 1, m)) {
-        if (ra != "") gated(rd, rr, ra)
+        if (guessed) verdict(rd, rr ", by a glob or a word given at run time")
+        else if (ra != "") gated(rd, rr, ra)
         else verdict(rd, rr)
+    }
+}
+
+# A command name that is a glob pattern: it counts as each gated command,
+# shell or interpreter it could be. One such command gets its verdict;
+# several are at most asked. A wrapper it could be asks when the words after
+# it mention a gated command.
+function globhead(s, k, m, re,   c, nc, j, t, nm, d, r) {
+    nc = split("curl wget nc ncat netcat gh niwa git unset bash sh zsh dash ksh mksh fish csh tcsh pwsh eval python python3 pypy3 perl ruby node nodejs bun deno osascript php lua luajit Rscript awk gawk mawk nawk", c, " ")
+    nm = 0; d = ""; r = ""
+    for (j = 1; j <= nc; j++) {
+        if (c[j] !~ re) continue
+        nm++
+        if (rules(s, c[j], k + 1, m) && rank[rd] > rank[d]) { d = rd; r = rr }
+    }
+    if (d != "") verdict((nm == 1) ? d : "ask", "command name is a glob pattern; could be " r)
+    nc = split("command builtin exec nohup setsid nocorrect noglob stdbuf env sudo doas nice timeout gtimeout time caffeinate arch script watch xargs find fd", c, " ")
+    for (j = 1; j <= nc; j++) {
+        if (c[j] !~ re) continue
+        t = ""
+        for (k++; k <= m; k++) t = t " " segw[s, k]
+        if (mentions(t)) verdict("ask", "command name is a glob pattern; could be " c[j] " running a gated command")
+        return
     }
 }
 
@@ -660,6 +1202,8 @@ END {
         verdict("ask", "heredoc with command substitution mentions a gated command")
     if (unclosed && mentions(src))
         verdict("ask", "unclosed quote or substitution around a gated command")
+    if (braceover && mentions(src))
+        verdict("ask", "brace expansion too large to read, around a gated command")
     # The authorities, in the order niwa lists them.
     list = ""
     split("merge-pr close-issue cut-release", order, " ")
