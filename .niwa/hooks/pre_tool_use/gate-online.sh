@@ -46,7 +46,7 @@
 #   deny: gh pr merge, gh repo delete, gh api to pulls/<n>/merge or the
 #         GraphQL mergePullRequest / enablePullRequestAutoMerge mutations,
 #         curl, wget, nc, ncat, netcat, niwa reap (but see below)
-#   ask: gh auth switch, gh release create, gh issue close, unset GH_TOKEN,
+#   ask:  gh auth switch, gh release create, gh issue close, unset GH_TOKEN,
 #         git push with --force, --force-with-lease, -f or a +refspec,
 #         a release workflow dispatch
 #
@@ -58,8 +58,8 @@
 # resolved, must reach the same workspace root. That root declares itself
 # scratch with .niwa/scratch-check, a regular file whose first line is the
 # root's own resolved path, in a .niwa that is a real directory and holds
-# the workspace.toml; neither .niwa nor the file may be a symlink. The root also must not be this hook's own workspace, lie
-# inside it, or contain it: "own" is the outermost directory above this
+# the workspace.toml; neither .niwa nor the file may be a symlink. The root
+# also must not be this hook's own workspace, lie inside it, or contain it: "own" is the outermost directory above this
 # script holding .niwa/workspace.toml, .niwa/instance.json or
 # .niwa.prev/workspace.toml, so a declaration written into this workspace or
 # any of its instances never counts, and a hook that finds no workspace of
@@ -584,8 +584,10 @@ function rules(s, h, a, m,   x, k, sub1, sub2, meth, t, n, w, wd, merge, ep, wri
         return rd != ""
     }
     if (h == "niwa") {
-        for (k = a; k <= m; k++) if (segw[s, k] !~ /^-/) break
-        if (k <= m && segw[s, k] == "reap") { rd = "deny"; rr = "niwa reap"; return 1 }
+        # reap as any word, not only the first after the flags: a flag ahead
+        # of it may take a value (niwa -C .. reap), so where the subcommand
+        # sits is not known here.
+        for (k = a; k <= m; k++) if (segw[s, k] == "reap") { rd = "deny"; rr = "niwa reap"; return 1 }
         return 0
     }
     if (h == "git") {
@@ -719,9 +721,15 @@ decide() {
 
 # ---------------------------------------------------------------- scratch reap
 
-# physical DIR: prints DIR with every symlink resolved, or fails.
+# physical DIR: prints DIR with every symlink resolved, or fails, as it does
+# for a resolved path holding a control character. The x keeps command
+# substitution from stripping a trailing newline that is part of the path.
 physical() {
-    (CDPATH= cd -P -- "$1" >/dev/null 2>&1 && pwd -P)
+    local p
+    p=$(CDPATH= cd -P -- "$1" >/dev/null 2>&1 && pwd -P && printf x) || return 1
+    p=${p%$'\n'x}
+    case "$p" in *[[:cntrl:]]*) return 1 ;; esac
+    printf '%s\n' "$p"
 }
 
 # root_of DIR: prints the workspace root niwa finds for DIR, walking up DIR
@@ -743,7 +751,10 @@ root_of() {
 # payload's cwd would target is declared scratch and is not this workspace.
 scratch_declared() {
     local cwd lroot proot root line d own
-    cwd=$(printf '%s' "$INPUT" | jq -r '.cwd // empty' 2>/dev/null) || return 1
+    # jq -j adds no newline and the x keeps any the cwd ends in, so a cwd
+    # with a trailing newline is read as it is and refused below.
+    cwd=$(printf '%s' "$INPUT" | jq -j '.cwd // empty' 2>/dev/null && printf x) || return 1
+    cwd=${cwd%x}
     # Absolute and clean, so the walk up is the one niwa makes.
     case "$cwd" in /*) ;; *) return 1 ;; esac
     case "$cwd/" in *//* | */./* | */../*) return 1 ;; esac
