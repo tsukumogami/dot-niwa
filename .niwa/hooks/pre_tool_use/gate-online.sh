@@ -45,44 +45,10 @@
 # Rules
 #   deny: gh pr merge, gh repo delete, gh api to pulls/<n>/merge or the
 #         GraphQL mergePullRequest / enablePullRequestAutoMerge mutations,
-#         curl, wget, nc, ncat, netcat, niwa reap (but see below)
+#         curl, wget, nc, ncat, netcat, niwa reap
 #   ask:  gh auth switch, gh release create, gh issue close, unset GH_TOKEN,
 #         git push with --force, --force-with-lease, -f or a +refspec,
 #         a release workflow dispatch
-#
-# niwa reap is allowed in one case: a scratch workspace a check made for
-# itself. The command must be exactly niwa reap, with only the flags niwa
-# takes there (--no-progress, and --help or -h after reap) and nothing else
-# on the line: no wrapper, assignment, redirection, substitution, quote, or
-# second command. The payload's cwd must be absolute and clean and be the
-# workspace root itself, not a directory below it. That root declares itself
-# scratch with .niwa/scratch-check, a regular file whose first line is the
-# root's own resolved path, in a .niwa that is a real directory and holds
-# the workspace.toml; none of the three may be a symlink. The root
-# also must not be this hook's own workspace, lie inside it, or contain it,
-# compared by file identity, not spelling: "own" is the outermost directory
-# above this script, as written and resolved, holding .niwa/workspace.toml,
-# .niwa/instance.json or .niwa.prev/workspace.toml, so a declaration written
-# into this workspace or any of its instances never counts, and a hook that
-# finds no workspace of its own allows no reap. A check declares its
-# workspace with
-#
-#   niwa init scratchws && cd scratchws &&
-#   pwd -P > .niwa/scratch-check
-#
-# and then runs niwa reap as a command of its own from that root, so the cwd
-# the harness reports for that command is the scratch root. Any other niwa
-# reap is denied as before, with the same message. An allowed reap runs the
-# scratch workspace's own [session.on_reap] and [session.before_remove]
-# commands, which can do anything; the hook doesn't read them, as it reads
-# no script file.
-#
-# A niwa command is a reap when any of its words is reap, not only the first
-# after its flags: a flag ahead of it may take a value (niwa -C .. reap), so
-# the subcommand's place can't be told from the line. So is one where a word
-# up to the subcommand is expanded by the shell (niwa $x, niwa {reap,x},
-# niwa rea?), since it may become reap. The cost is a deny for a niwa command
-# that merely names something reap, or picks its subcommand at run time.
 #
 # A release workflow dispatch is gh workflow run, or a gh api call other than
 # a GET to repos/<owner>/<repo>/actions/workflows/<selector>/dispatches,
@@ -430,7 +396,7 @@ function scan(   c, nx, rest, j, k) {
 function mentions(t) {
     return t ~ /gh[ \t\n]+(pr[ \t\n]+merge|repo[ \t\n]+delete|auth[ \t\n]+switch|release[ \t\n]+create|issue[ \t\n]+close)/ ||
            t ~ /pulls\/[^\/ \t\n]+\/merge|mergePullRequest|enablePullRequestAutoMerge/ ||
-           t ~ /niwa[ \t\n]+([^;&|\n]*[ \t])?reap|unset[ \t\n]+GH_TOKEN/ ||
+           t ~ /niwa[ \t\n]+reap|unset[ \t\n]+GH_TOKEN/ ||
            tolower(t) ~ /prepare-release|release-prepare|prepare[ \t]+release/ ||
            t ~ /actions\/workflows\/[^ \t\n]*\/dispatches/ ||
            t ~ /(^|[^A-Za-z0-9_.-])(curl|wget|nc|ncat|netcat)([ \t\n]|$)/ ||
@@ -595,21 +561,8 @@ function rules(s, h, a, m,   x, k, sub1, sub2, meth, t, n, w, wd, merge, ep, wri
         return rd != ""
     }
     if (h == "niwa") {
-        # reap as any word, not only the first after the flags: a flag ahead
-        # of it may take a value (niwa -C .. reap), so where the subcommand
-        # sits is not known here.
-        for (k = a; k <= m; k++) if (segw[s, k] == "reap") { rd = "deny"; rr = "niwa reap"; return 1 }
-        # Up to the first plain word, the one niwa takes as its subcommand, a
-        # word the shell expands (a substitution, a brace or a glob, or the
-        # @ ? * + ! that opens an extended glob the scanner reads as a group)
-        # may turn into reap, so it is read as one.
-        for (k = a; k <= m; k++) {
-            if (segd[s, k] || segw[s, k] ~ /[{}*?[]|[@?*+!]$/) { rd = "deny"; rr = "niwa reap"; return 1 }
-            if (segw[s, k] !~ /^-/) break
-        }
-        # No subcommand word at all: what follows niwa on the line, such as a
-        # zsh glob group (niwa (reap)), may supply it.
-        if (k > m && src ~ /niwa[ \t]+[^;&|\n]*reap/) { rd = "deny"; rr = "niwa reap"; return 1 }
+        for (k = a; k <= m; k++) if (segw[s, k] !~ /^-/) break
+        if (k <= m && segw[s, k] == "reap") { rd = "deny"; rr = "niwa reap"; return 1 }
         return 0
     }
     if (h == "git") {
@@ -740,99 +693,6 @@ decide() {
         ask)  emit ask "Online operation requires confirmation: $2" ;;
     esac
 }
-
-# ---------------------------------------------------------------- scratch reap
-
-# physical DIR: prints DIR with every symlink resolved, or fails, as it does
-# for a resolved path holding a control character. The x keeps command
-# substitution from stripping a trailing newline that is part of the path.
-physical() {
-    local p
-    [ -n "$1" ] || return 1
-    p=$(CDPATH= cd -P -- "$1" >/dev/null 2>&1 && pwd -P && printf x) || return 1
-    p=${p%$'\n'x}
-    case "$p" in *[[:cntrl:]]*) return 1 ;; esac
-    printf '%s\n' "$p"
-}
-
-# within A B: succeeds when A is B or lies under it, compared by file
-# identity rather than by spelling, so a path typed in another case on a
-# case-insensitive filesystem, or reached through a link, still counts. A
-# path that can't be resolved counts as within, so the caller refuses.
-within() {
-    local a
-    a=$(physical "$1") || return 0
-    while :; do
-        [ "${a:-/}" -ef "$2" ] && return 0
-        [ -n "$a" ] || return 1
-        a=${a%/*}
-    done
-}
-
-# own_of DIR: prints the outermost directory at or above DIR, walking DIR as
-# written, that holds a workspace config or an instance record, or fails.
-own_of() {
-    local d=$1 own=
-    while :; do
-        if [ -e "$d/.niwa/workspace.toml" ] || [ -e "$d/.niwa/instance.json" ] ||
-            [ -e "$d/.niwa.prev/workspace.toml" ]; then
-            own=${d:-/}
-        fi
-        [ -n "$d" ] || break
-        d=${d%/*}
-    done
-    [ -n "$own" ] || return 1
-    printf '%s\n' "$own"
-}
-
-# scratch_declared: succeeds only when the payload's cwd is the root of a
-# workspace declared scratch that is not this workspace.
-scratch_declared() {
-    local cwd root line d o found=
-    # jq -j adds no newline and the x keeps any the cwd ends in, so a cwd
-    # with a trailing newline is read as it is and refused below.
-    cwd=$(printf '%s' "$INPUT" | jq -j '.cwd // empty' 2>/dev/null && printf x) || return 1
-    cwd=${cwd%x}
-    case "$cwd" in /*) ;; *) return 1 ;; esac
-    case "$cwd/" in *//* | */./* | */../*) return 1 ;; esac
-    case "$cwd" in *[[:cntrl:]]*) return 1 ;; esac
-    # The cwd is the workspace root itself, so niwa's walk up stops there
-    # whether it starts from the cwd as written, its resolved path, or any
-    # other name the shell has for it.
-    [ -f "$cwd/.niwa/workspace.toml" ] || return 1
-    root=$(physical "$cwd") || return 1
-    [ "$root" != / ] || return 1
-    # The declaration: a regular file in the root's own .niwa, neither of
-    # them a symlink, whose first line is the root's resolved path.
-    [ -d "$root/.niwa" ] && [ ! -L "$root/.niwa" ] || return 1
-    [ -f "$root/.niwa/workspace.toml" ] && [ ! -L "$root/.niwa/workspace.toml" ] || return 1
-    [ -f "$root/.niwa/scratch-check" ] && [ ! -L "$root/.niwa/scratch-check" ] || return 1
-    IFS= read -r -n 4096 line < "$root/.niwa/scratch-check" || [ -n "$line" ] || return 1
-    [ "$line" = "$root" ] || return 1
-    # This workspace, found from this script's directory both as written and
-    # resolved: the root must be neither inside it nor hold it. Finding no
-    # workspace either way means no allowance.
-    case "$0" in /*) ;; *) return 1 ;; esac
-    case "$0" in *//* | */./* | */../* | *[[:cntrl:]]*) return 1 ;; esac
-    for d in "${0%/*}" "$(physical "${0%/*}")"; do
-        [ -n "$d" ] || continue
-        o=$(own_of "$d") || continue
-        found=1
-        within "$root" "$o" && return 1
-        within "$o" "$root" && return 1
-    done
-    [ -n "$found" ]
-}
-
-# niwa reap as the whole command, with only the flags niwa takes there
-# (--no-progress, and --help or -h after reap), in a workspace declared
-# scratch for a check: the reap deny is the only verdict such a command can
-# get, and it is lifted. Every other reap keeps it.
-SCRATCH_REAP_FORM='^niwa( +--no-progress)? +reap( +(--no-progress|--help|-h))*$'
-if [ "$TODAY" = deny ] && [ "$TODAY_WHY" = "niwa reap" ] && [ "$NEEDS" = "-" ] &&
-    [[ $COMMAND =~ $SCRATCH_REAP_FORM ]] && scratch_declared; then
-    exit 0
-fi
 
 # Nothing a grant decides, or something already denied that no grant lifts:
 # today's verdict, with no lookup.
