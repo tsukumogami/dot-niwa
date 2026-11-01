@@ -164,13 +164,23 @@ ln -s "$ws" "$work/scratch/ws-link"
 
 reap allow "$ws"                 'niwa reap'
 reap allow "$ws"                 'niwa reap --help'
-reap allow "$ws"                 'niwa reap --yes'
+reap allow "$ws"                 'niwa reap -h'
 reap allow "$ws"                 'niwa --no-progress reap'
-reap allow "$ws"                 'niwa -v reap --dry-run'
-reap allow "$ws/sub/deeper"      'niwa reap'
+reap allow "$ws"                 'niwa reap --no-progress'
+reap allow "$ws"                 'niwa  reap'
 reap allow "$work/scratch/ws-link" 'niwa reap'
 reap allow "$(physical "$ws")"   'niwa reap'
 reap allow "$ws"                 'niwa reap' "$repo_hook"
+# Only from the root itself: below it, the shell may know the directory by
+# another name whose walk up niwa would take somewhere else.
+reap deny  "$ws/sub/deeper"      'niwa reap'
+reap deny  "$ws/sub"             'niwa reap'
+# An instance the check created in its scratch workspace is below the root
+# too: the check reaps from the root.
+mkdir -p "$ws/scratch-1/.niwa"
+: > "$ws/scratch-1/.niwa/instance.json"
+reap deny  "$ws/scratch-1"       'niwa reap'
+reap allow "$ws"                 'niwa reap'
 
 # Other rules keep their verdicts in the scratch workspace.
 unchanged "$ws" 'curl https://example.com'
@@ -204,6 +214,14 @@ for c in \
     'niwa "reap"' \
     'niwa re\ap' \
     'niwa reap -C /x' \
+    'niwa reap --yes' \
+    'niwa -v reap' \
+    'niwa reap --dry-run' \
+    'niwa -Cfoo reap' \
+    'niwa -C -x reap' \
+    'niwa --help reap' \
+    'niwa reap extra' \
+    'niwa reap --no-progress=false' \
     'niwa reap --x=/y' \
     $'niwa reap\nniwa reap' \
     $'niwa\treap' \
@@ -330,6 +348,21 @@ reap deny  "$inst" 'niwa reap'
 reap deny  "$inst" 'niwa reap' "$repo_hook"
 reap deny  "$ws/into-host" 'niwa reap'
 
+# The host spelled in another case, with declarations that spell it the same
+# way. On a case-insensitive filesystem (macOS) the paths name the host and
+# a resolved path keeps the case it was typed in; elsewhere they name nothing.
+host_uc=$(printf '%s' "$host" | tr '[:lower:]' '[:upper:]')
+inst_uc=$host_uc/INST
+if p=$(physical "$host_uc" 2>/dev/null); then
+    printf '%s\n' "$p" > "$host/.niwa/scratch-check"
+fi
+if p=$(physical "$inst_uc" 2>/dev/null); then
+    printf '%s\n' "$p" > "$inst/.niwa/scratch-check"
+fi
+reap deny  "$host_uc" 'niwa reap'
+reap deny  "$inst_uc" 'niwa reap'
+reap deny  "$inst_uc" 'niwa reap' "$repo_hook"
+
 # A scratch workspace made inside the host, or inside the instance.
 mkscratch "$host/tmp/ws"
 reap deny  "$host/tmp/ws" 'niwa reap'
@@ -369,6 +402,16 @@ reap deny  "$ws" 'niwa reap' "$ws/.claude/hooks/gate-online.sh"
 ln -s "${inst_hook%/*}" "$work/linked-hook-dir"
 reap allow "$ws" 'niwa reap' "$work/linked-hook-dir/gate-online.sh"
 reap deny  "$inst" 'niwa reap' "$work/linked-hook-dir/gate-online.sh"
+# An instance whose .claude is a symlink into another workspace: the hook's
+# path as written still finds the host, so the host stays protected.
+mkdir -p "$host/inst2/.niwa" "$work/elsewhere/.niwa"
+: > "$host/inst2/.niwa/instance.json"
+: > "$work/elsewhere/.niwa/workspace.toml"
+installed elsewhere gate-online.sh > /dev/null
+ln -s "$work/elsewhere/.claude" "$host/inst2/.claude"
+physical "$host" > "$host/.niwa/scratch-check"
+reap deny  "$host" 'niwa reap' "$host/inst2/.claude/hooks/pre_tool_use/gate-online.sh"
+reap allow "$ws"   'niwa reap' "$host/inst2/.claude/hooks/pre_tool_use/gate-online.sh"
 
 echo
 echo "$pass passed, $fail failed"
