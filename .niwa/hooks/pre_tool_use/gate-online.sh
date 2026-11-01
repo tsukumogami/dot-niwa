@@ -58,7 +58,7 @@
 # workspace root itself, not a directory below it. That root declares itself
 # scratch with .niwa/scratch-check, a regular file whose first line is the
 # root's own resolved path, in a .niwa that is a real directory and holds
-# the workspace.toml; neither .niwa nor the file may be a symlink. The root
+# the workspace.toml; none of the three may be a symlink. The root
 # also must not be this hook's own workspace, lie inside it, or contain it,
 # compared by file identity, not spelling: "own" is the outermost directory
 # above this script, as written and resolved, holding .niwa/workspace.toml,
@@ -72,14 +72,17 @@
 #
 # and then runs niwa reap as a command of its own from that root, so the cwd
 # the harness reports for that command is the scratch root. Any other niwa
-# reap is denied as before, with the same message. What the scratch
-# workspace's own [session.on_reap] or [session.before_remove] commands do
-# once the reap runs is not read, as no script file is.
+# reap is denied as before, with the same message. An allowed reap runs the
+# scratch workspace's own [session.on_reap] and [session.before_remove]
+# commands, which can do anything; the hook doesn't read them, as it reads
+# no script file.
 #
 # A niwa command is a reap when any of its words is reap, not only the first
 # after its flags: a flag ahead of it may take a value (niwa -C .. reap), so
-# the subcommand's place can't be told from the line. The cost is a deny for
-# a niwa command that merely names something reap.
+# the subcommand's place can't be told from the line. So is one where a word
+# up to the subcommand is expanded by the shell (niwa $x, niwa {reap,x},
+# niwa rea?), since it may become reap. The cost is a deny for a niwa command
+# that merely names something reap, or picks its subcommand at run time.
 #
 # A release workflow dispatch is gh workflow run, or a gh api call other than
 # a GET to repos/<owner>/<repo>/actions/workflows/<selector>/dispatches,
@@ -427,7 +430,7 @@ function scan(   c, nx, rest, j, k) {
 function mentions(t) {
     return t ~ /gh[ \t\n]+(pr[ \t\n]+merge|repo[ \t\n]+delete|auth[ \t\n]+switch|release[ \t\n]+create|issue[ \t\n]+close)/ ||
            t ~ /pulls\/[^\/ \t\n]+\/merge|mergePullRequest|enablePullRequestAutoMerge/ ||
-           t ~ /niwa[ \t\n]+reap|unset[ \t\n]+GH_TOKEN/ ||
+           t ~ /niwa[ \t\n]+([^;&|\n]*[ \t])?reap|unset[ \t\n]+GH_TOKEN/ ||
            tolower(t) ~ /prepare-release|release-prepare|prepare[ \t]+release/ ||
            t ~ /actions\/workflows\/[^ \t\n]*\/dispatches/ ||
            t ~ /(^|[^A-Za-z0-9_.-])(curl|wget|nc|ncat|netcat)([ \t\n]|$)/ ||
@@ -596,6 +599,17 @@ function rules(s, h, a, m,   x, k, sub1, sub2, meth, t, n, w, wd, merge, ep, wri
         # of it may take a value (niwa -C .. reap), so where the subcommand
         # sits is not known here.
         for (k = a; k <= m; k++) if (segw[s, k] == "reap") { rd = "deny"; rr = "niwa reap"; return 1 }
+        # Up to the first plain word, the one niwa takes as its subcommand, a
+        # word the shell expands (a substitution, a brace or a glob, or the
+        # @ ? * + ! that opens an extended glob the scanner reads as a group)
+        # may turn into reap, so it is read as one.
+        for (k = a; k <= m; k++) {
+            if (segd[s, k] || segw[s, k] ~ /[{}*?[]|[@?*+!]$/) { rd = "deny"; rr = "niwa reap"; return 1 }
+            if (segw[s, k] !~ /^-/) break
+        }
+        # No subcommand word at all: what follows niwa on the line, such as a
+        # zsh glob group (niwa (reap)), may supply it.
+        if (k > m && src ~ /niwa[ \t]+[^;&|\n]*reap/) { rd = "deny"; rr = "niwa reap"; return 1 }
         return 0
     }
     if (h == "git") {
@@ -734,6 +748,7 @@ decide() {
 # substitution from stripping a trailing newline that is part of the path.
 physical() {
     local p
+    [ -n "$1" ] || return 1
     p=$(CDPATH= cd -P -- "$1" >/dev/null 2>&1 && pwd -P && printf x) || return 1
     p=${p%$'\n'x}
     case "$p" in *[[:cntrl:]]*) return 1 ;; esac
@@ -790,7 +805,7 @@ scratch_declared() {
     # The declaration: a regular file in the root's own .niwa, neither of
     # them a symlink, whose first line is the root's resolved path.
     [ -d "$root/.niwa" ] && [ ! -L "$root/.niwa" ] || return 1
-    [ -f "$root/.niwa/workspace.toml" ] || return 1
+    [ -f "$root/.niwa/workspace.toml" ] && [ ! -L "$root/.niwa/workspace.toml" ] || return 1
     [ -f "$root/.niwa/scratch-check" ] && [ ! -L "$root/.niwa/scratch-check" ] || return 1
     IFS= read -r -n 4096 line < "$root/.niwa/scratch-check" || [ -n "$line" ] || return 1
     [ "$line" = "$root" ] || return 1
