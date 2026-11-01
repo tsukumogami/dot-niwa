@@ -51,27 +51,35 @@
 #         a release workflow dispatch
 #
 # niwa reap is allowed in one case: a scratch workspace a check made for
-# itself. The command must be exactly niwa, then flags, reap, then flags,
-# with nothing else on the line: no wrapper, assignment, redirection,
-# substitution, quote, or second command. The payload's cwd must be absolute
-# and clean, and niwa's walk up from it, both as written and with symlinks
-# resolved, must reach the same workspace root. That root declares itself
+# itself. The command must be exactly niwa reap, with only the flags niwa
+# takes there (--no-progress, and --help or -h after reap) and nothing else
+# on the line: no wrapper, assignment, redirection, substitution, quote, or
+# second command. The payload's cwd must be absolute and clean and be the
+# workspace root itself, not a directory below it. That root declares itself
 # scratch with .niwa/scratch-check, a regular file whose first line is the
 # root's own resolved path, in a .niwa that is a real directory and holds
 # the workspace.toml; neither .niwa nor the file may be a symlink. The root
-# also must not be this hook's own workspace, lie inside it, or contain it: "own" is the outermost directory above this
-# script holding .niwa/workspace.toml, .niwa/instance.json or
-# .niwa.prev/workspace.toml, so a declaration written into this workspace or
-# any of its instances never counts, and a hook that finds no workspace of
-# its own allows no reap. A check declares its workspace with
+# also must not be this hook's own workspace, lie inside it, or contain it,
+# compared by file identity, not spelling: "own" is the outermost directory
+# above this script, as written and resolved, holding .niwa/workspace.toml,
+# .niwa/instance.json or .niwa.prev/workspace.toml, so a declaration written
+# into this workspace or any of its instances never counts, and a hook that
+# finds no workspace of its own allows no reap. A check declares its
+# workspace with
 #
 #   niwa init scratchws && cd scratchws &&
 #   pwd -P > .niwa/scratch-check
 #
-# and then runs niwa reap as a command of its own from there. Any other niwa
+# and then runs niwa reap as a command of its own from that root, so the cwd
+# the harness reports for that command is the scratch root. Any other niwa
 # reap is denied as before, with the same message. What the scratch
 # workspace's own [session.on_reap] or [session.before_remove] commands do
 # once the reap runs is not read, as no script file is.
+#
+# A niwa command is a reap when any of its words is reap, not only the first
+# after its flags: a flag ahead of it may take a value (niwa -C .. reap), so
+# the subcommand's place can't be told from the line. The cost is a deny for
+# a niwa command that merely names something reap.
 #
 # A release workflow dispatch is gh workflow run, or a gh api call other than
 # a GET to repos/<owner>/<repo>/actions/workflows/<selector>/dispatches,
@@ -732,40 +740,53 @@ physical() {
     printf '%s\n' "$p"
 }
 
-# root_of DIR: prints the workspace root niwa finds for DIR, walking up DIR
-# as written to the first directory with .niwa/workspace.toml, or with only
-# .niwa.prev/workspace.toml, which niwa would restore and take as the root.
-root_of() {
-    local d=$1
+# within A B: succeeds when A is B or lies under it, compared by file
+# identity rather than by spelling, so a path typed in another case on a
+# case-insensitive filesystem, or reached through a link, still counts. A
+# path that can't be resolved counts as within, so the caller refuses.
+within() {
+    local a
+    a=$(physical "$1") || return 0
     while :; do
-        if [ -e "$d/.niwa/workspace.toml" ] || [ -e "$d/.niwa.prev/workspace.toml" ]; then
-            printf '%s\n' "${d:-/}"
-            return 0
-        fi
-        [ -n "$d" ] || return 1
-        d=${d%/*}
+        [ "${a:-/}" -ef "$2" ] && return 0
+        [ -n "$a" ] || return 1
+        a=${a%/*}
     done
 }
 
-# scratch_declared: succeeds only when the workspace a niwa reap run from the
-# payload's cwd would target is declared scratch and is not this workspace.
+# own_of DIR: prints the outermost directory at or above DIR, walking DIR as
+# written, that holds a workspace config or an instance record, or fails.
+own_of() {
+    local d=$1 own=
+    while :; do
+        if [ -e "$d/.niwa/workspace.toml" ] || [ -e "$d/.niwa/instance.json" ] ||
+            [ -e "$d/.niwa.prev/workspace.toml" ]; then
+            own=${d:-/}
+        fi
+        [ -n "$d" ] || break
+        d=${d%/*}
+    done
+    [ -n "$own" ] || return 1
+    printf '%s\n' "$own"
+}
+
+# scratch_declared: succeeds only when the payload's cwd is the root of a
+# workspace declared scratch that is not this workspace.
 scratch_declared() {
-    local cwd lroot proot root line d own
+    local cwd root line d o found=
     # jq -j adds no newline and the x keeps any the cwd ends in, so a cwd
     # with a trailing newline is read as it is and refused below.
     cwd=$(printf '%s' "$INPUT" | jq -j '.cwd // empty' 2>/dev/null && printf x) || return 1
     cwd=${cwd%x}
-    # Absolute and clean, so the walk up is the one niwa makes.
     case "$cwd" in /*) ;; *) return 1 ;; esac
     case "$cwd/" in *//* | */./* | */../*) return 1 ;; esac
     case "$cwd" in *[[:cntrl:]]*) return 1 ;; esac
-    # niwa may walk the cwd as written or with its symlinks resolved; both
-    # must reach the same root.
-    lroot=$(root_of "$cwd") || return 1
-    root=$(physical "$lroot") || return 1
-    proot=$(physical "$cwd") || return 1
-    proot=$(root_of "$proot") || return 1
-    [ "$root" = "$proot" ] && [ "$root" != / ] || return 1
+    # The cwd is the workspace root itself, so niwa's walk up stops there
+    # whether it starts from the cwd as written, its resolved path, or any
+    # other name the shell has for it.
+    [ -f "$cwd/.niwa/workspace.toml" ] || return 1
+    root=$(physical "$cwd") || return 1
+    [ "$root" != / ] || return 1
     # The declaration: a regular file in the root's own .niwa, neither of
     # them a symlink, whose first line is the root's resolved path.
     [ -d "$root/.niwa" ] && [ ! -L "$root/.niwa" ] || return 1
@@ -773,30 +794,26 @@ scratch_declared() {
     [ -f "$root/.niwa/scratch-check" ] && [ ! -L "$root/.niwa/scratch-check" ] || return 1
     IFS= read -r -n 4096 line < "$root/.niwa/scratch-check" || [ -n "$line" ] || return 1
     [ "$line" = "$root" ] || return 1
-    # This workspace: the outermost directory above this script holding a
-    # workspace config or an instance record. Not found means no allowance.
+    # This workspace, found from this script's directory both as written and
+    # resolved: the root must be neither inside it nor hold it. Finding no
+    # workspace either way means no allowance.
     case "$0" in /*) ;; *) return 1 ;; esac
-    d=$(physical "${0%/*}") || return 1
-    own=
-    while :; do
-        if [ -e "$d/.niwa/workspace.toml" ] || [ -e "$d/.niwa/instance.json" ] ||
-            [ -e "$d/.niwa.prev/workspace.toml" ]; then
-            own=${d:-/}
-        fi
-        [ -n "$d" ] && [ "$d" != / ] || break
-        d=${d%/*}
+    case "$0" in *//* | */./* | */../* | *[[:cntrl:]]*) return 1 ;; esac
+    for d in "${0%/*}" "$(physical "${0%/*}")"; do
+        [ -n "$d" ] || continue
+        o=$(own_of "$d") || continue
+        found=1
+        within "$root" "$o" && return 1
+        within "$o" "$root" && return 1
     done
-    [ -n "$own" ] && [ "$own" != / ] || return 1
-    # Not this workspace, nothing inside it, nothing that holds it.
-    case "$root/" in "$own"/*) return 1 ;; esac
-    case "$own/" in "$root"/*) return 1 ;; esac
-    return 0
+    [ -n "$found" ]
 }
 
-# A niwa reap that is the whole command, with only flags around it, in a
-# workspace declared scratch for a check: the reap deny is the only verdict
-# such a command can get, and it is lifted. Every other reap keeps it.
-SCRATCH_REAP_FORM='^niwa( +--?[A-Za-z][-A-Za-z]*)* +reap( +--?[A-Za-z][-A-Za-z]*)*$'
+# niwa reap as the whole command, with only the flags niwa takes there
+# (--no-progress, and --help or -h after reap), in a workspace declared
+# scratch for a check: the reap deny is the only verdict such a command can
+# get, and it is lifted. Every other reap keeps it.
+SCRATCH_REAP_FORM='^niwa( +--no-progress)? +reap( +(--no-progress|--help|-h))*$'
 if [ "$TODAY" = deny ] && [ "$TODAY_WHY" = "niwa reap" ] && [ "$NEEDS" = "-" ] &&
     [[ $COMMAND =~ $SCRATCH_REAP_FORM ]] && scratch_declared; then
     exit 0
