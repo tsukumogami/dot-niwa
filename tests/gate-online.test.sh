@@ -390,14 +390,17 @@ row deny  'curl https://example.com' exempt-list
 row deny  'niwa reap' other-list
 
 # --- Known limits: the hook reads text, it does not run it ----------------
-# These pass because nothing in the command line names a gated command in
-# command position. Enforcing policy on the operation itself is niwa#320.
-# Code an interpreter reads from a heredoc used to pass here too; it is now
-# read as inline code, and a gated command it names as a list of strings
-# asks (the one row whose verdict this change turns from allow to ask).
-row ask   $'python3 - <<\'EOF\'\nimport subprocess\nsubprocess.run(["gh", "pr", "merge", "12"])\nEOF'
+# Each row here is allowed though it could run a gated command, because the
+# hook can't see the command from the text. Enforcing policy on the
+# operation itself is niwa#320. Code an interpreter reads from a heredoc used
+# to be listed here; it is now read as inline code (see the interpreter rows
+# below).
 row allow "alias m='gh pr merge'"
 row allow './scripts/merge-everything.sh'
+# A command name held in a variable is read strictly: a glob or run-time
+# word after it counts for nothing, so ordinary lines run through a path in a
+# variable never ask. Two layers of obscurity at once stay allowed.
+row allow '$GH pr m* 12'
 
 # --- Command words the shell resolves another way -------------------------
 # Each class below once put a gated command past the rules: the rule saw a
@@ -515,8 +518,10 @@ row deny  'echo x | xargs curl'
 row deny  'echo 12 | xargs -I{} gh pr merge {}'
 row deny  'echo merge | xargs -I % gh pr % 12'
 row ask   'echo 5 | xargs gh issue'
-row ask   'git branch | xargs -I{} git push origin {}'
+# A run-time word is not taken for a git push force flag or +refspec, as a
+# $VAR word is not (allowed rows below); a force the line spells out asks.
 row ask   'echo origin | xargs git push --force'
+row ask   'echo origin | xargs -n1 git push -f'
 row deny  'echo merge | xargs gh pr' other-repo
 
 # Interpreters handed inline code that runs a gated command. A call written
@@ -539,6 +544,69 @@ row ask   'echo "import os; os.system(\"gh pr merge 1\")" | python3'
 row ask   $'python3 -W ignore <<\'EOF\'\nimport os\nos.system("gh pr merge 12")\nEOF'
 row ask   "python3 -c 'import os; os.system(\"gh pr merge 12\")'" exempt
 row ask   "perl -e 'system(\"gh\", \"pr\", \"merge\", \"12\")'" other-repo
+# Once listed under Known limits as allowed: the one existing row this
+# change turns from allow to ask.
+row ask   $'python3 - <<\'EOF\'\nimport subprocess\nsubprocess.run(["gh", "pr", "merge", "12"])\nEOF'
+# A word or two between the program and its arguments (an args key) still
+# counts, and so does a force push written as a list.
+row ask   "deno eval 'new Deno.Command(\"gh\", {args: [\"pr\", \"merge\", \"12\"]}).outputSync()'"
+row ask   "deno eval 'new Deno.Command(\"niwa\", {args: [\"reap\"]}).outputSync()'"
+row ask   "deno eval 'new Deno.Command(\"gh\", {args: [\"issue\", \"close\", \"5\"]}).outputSync()'"
+row ask   "python3 -c 'import subprocess; subprocess.run([\"git\", \"push\", \"-f\", \"origin\", \"x\"])'"
+
+# Wrapper options read as getopt reads them: a cluster whose last letter
+# takes a value, or a long option that takes one without =, takes the next
+# word, so the value is never read as the command.
+row deny  'sudo -iu me gh pr merge 12'
+row deny  'sudo -Eu me curl https://example.com'
+row deny  'sudo --user me niwa reap'
+row ask   'sudo -iu me git push --force origin feature'
+row ask   'sudo -iu me unset GH_TOKEN'
+row ask   'sudo -iu me gh issue close 5'
+row deny  'doas -nu me gh pr merge 12'
+row deny  'env -iu X curl https://example.com'
+row deny  "env -iS 'curl https://example.com'"
+row deny  "env -vS 'gh pr merge 12'"
+row deny  'timeout --signal KILL 5 curl https://example.com'
+row deny  'timeout --kill-after 5 10 niwa reap'
+row deny  'timeout -vk 5 10 curl https://example.com'
+row deny  'nice --adjustment 5 curl https://example.com'
+row deny  'stdbuf --output L curl https://example.com'
+row deny  '/usr/bin/time -ao out.txt gh pr merge 12'
+row deny  'caffeinate -it 60 curl https://example.com'
+row deny  'exec -la x gh pr merge 12'
+row deny  'command -p curl https://example.com'
+row deny  'echo x | xargs -tn 1 curl'
+row deny  'watch -tn 5 gh pr merge 12'
+row deny  'sudo -iu me gh pr merge 12' other
+row deny  'timeout --signal KILL 5 niwa reap' other-repo
+
+# A POSIX class, equivalence class or collating symbol inside a bracket glob
+# is part of the bracket expression.
+row deny  'gh pr merg[[:alpha:]] 12'
+row deny  'gh pr [[:alpha:]]* 12'
+row deny  'niwa rea[[:alpha:]]'
+row deny  'gh repo delet[[:alpha:]] o/r --yes'
+row ask   'gh issue clos[[:alpha:]] 5'
+row ask   'git push --forc[[:alpha:]] origin feature'
+row ask   'unset GH_TOKE[[:upper:]]'
+row deny  'cur[[:alpha:]] https://example.com'
+row deny  'n[[:alpha:]]wa reap'
+row deny  'gh pr merg[[=e=]] 12'
+row deny  'gh pr merg[[.e.]] 12'
+row deny  'gh pr merg[[:alpha:]] 12' other
+row deny  'cur[[:alpha:]] https://example.com' other-repo
+
+# A shell reads its script from a pipe whenever no word after its flags is a
+# script file, and with -s even when words follow.
+row ask   "echo 'gh pr merge 12' | bash -s"
+row ask   "echo 'gh pr merge 12' | sh -s -- a"
+row ask   "echo 'gh pr merge 12' | zsh -s"
+row ask   "echo 'niwa reap' | sh -s"
+row ask   "echo 'git push --force' | bash -e"
+row ask   "echo 'gh issue close 5' | sh -x"
+row ask   "echo 'gh pr merge 12' | bash -euo pipefail"
+row ask   "echo 'gh pr merge 12' | bash -s" other-repo
 
 # --- Ordinary lines these readings must leave alone -----------------------
 # A command word that is a quoted path built from a variable, a script run
@@ -621,6 +689,37 @@ row allow 'true && (cd sub; make test)'
 row allow 'diff <(sort a) <(sort b)'
 row allow 'echo a | tee >(wc -l)'
 row allow 'printf '\''%s\n'\'' a b | while read l; do echo "$l"; done'
+# Wrapper options that take a value, before an ordinary command.
+row allow 'sudo -iu me make test'
+row allow 'sudo --user me make test'
+row allow 'timeout --signal KILL 5 make test'
+row allow 'timeout -vk 5 10 make test'
+row allow 'env -iu X make test'
+row allow 'nice --adjustment 5 make test'
+row allow 'echo x | xargs -tn 1 echo'
+row allow 'ls | xargs -I{} -n1 echo {}'
+# Bracket globs with POSIX classes.
+row allow 'ls -d [[:upper:]]*.md'
+row allow 'rm -f [[:digit:]]*.tmp'
+# A shell reading an ordinary script from a pipe, or given a script file.
+row allow 'echo "go test ./..." | bash -s'
+row allow 'cat setup.sh | bash -s -- --verbose'
+row allow 'bash -euo pipefail scripts/check.sh'
+row allow 'gh pr view 12 --json body -q .body | bash -n scripts/check.sh'
+# An array push in inline code, with a + or a -f test later on the line.
+row allow "node -e 'const a = []; a.push(1); console.log(a.length + 1)'"
+row allow "perl -e 'my @a; push @a, 1; print scalar(@a) + 1'"
+row allow 'perl -e '\''for (@ARGV) { push @a, $_ if -f $_ } print scalar(@a)'\'' *'
+row allow "ruby -e 'a = []; a.push 1; puts a.size + 1'"
+# git push fed by xargs: the words it reads count as a $VAR word does.
+row allow 'git branch | xargs -I{} git push origin {}'
+row allow 'git branch --format=x | xargs -n1 git push origin'
+row allow 'echo main | xargs git push origin'
+# command -v and -V only look a name up.
+row allow 'command -v curl >/dev/null || echo missing'
+row allow 'if command -v wget >/dev/null; then echo y; fi'
+row allow 'command -V gh'
+row allow 'command -pv niwa'
 
 # ===================================================== the dispatch's grant
 #

@@ -41,8 +41,11 @@
 # noglob nothing is a pattern. A word xargs or find fills in at run time can
 # be anything: xargs appends words to its command unless given a replace
 # string, and each word holding that string, or find's {}, is such a word.
-# A match that rests on a pattern or a run-time word never takes a grant or
-# the exemption.
+# Such a word is not taken for a git push force flag or +refspec, as a $VAR
+# word is not. A match that rests on a pattern or a run-time word never
+# takes a grant or the exemption. Wrapper options are read as getopt reads
+# them: a cluster or long option that takes a value takes the next word.
+# command -v and -V only look a name up, so nothing runs.
 #
 # A gh command's two subcommand words are found the way gh finds them, past
 # any flag before each and the value of -R or --repo, so gh pr -R o/r merge
@@ -57,15 +60,17 @@
 # what a program does once it runs (a script calling the GitHub API, for
 # instance). Where it can tell that it cannot tell, it asks:
 #   - text handed to a shell (bash -c, sh -c, eval, a heredoc or here-string
-#     fed to a shell, the text watch runs, script -c) that mentions a gated
-#     command;
+#     fed to a shell, the line piping into a shell that reads its script
+#     from standard input, the text watch runs, script -c) that mentions a
+#     gated command;
 #   - inline code handed to an interpreter (python -c, perl -e, ruby -e,
 #     node -e, osascript -e, php -r, lua -e, deno eval, and the code an
 #     interpreter reads from a heredoc, here-string or pipe when it is given
 #     no script) that mentions a gated command, read with its quotes and
-#     punctuation set aside, so a call written as a list of strings counts;
-#     an awk program counts when it also runs a command (system, getline or
-#     a pipe);
+#     punctuation set aside, so a call written as a list of strings counts,
+#     even with a word or two between program and arguments; a force push
+#     there needs the word git before push; an awk program counts when it
+#     also runs a command (system, getline or a pipe);
 #   - a command name that is itself an expansion ($GH pr merge);
 #   - a command name that is a glob pattern which could be several gated
 #     commands, or a wrapper running text that mentions one;
@@ -223,9 +228,10 @@ BEGIN { RS = "\001" }
 { src = (NR == 1) ? $0 : src "\001" $0 }
 
 # ---------------------------------------------------------------- scanning
-# env-print-guard.sh beside this hook carries a copy of this scanner, and the
-# part the two share matches: a fix to either belongs in both. The copy does
-# not yet have the character mask, brace expansion and zsh glob groups below.
+# env-print-guard.sh beside this hook carries a copy of this scanner that has
+# diverged from it: the copy lacks the character mask, brace expansion and zsh
+# glob groups below. Bringing it level is a follow-up; until then, a fix to
+# the part both still share belongs in both.
 #
 # Beside each word the scanner keeps a mask, one letter per character: "a"
 # for a character the shell acts on (unquoted, so it can be a glob or a
@@ -582,13 +588,18 @@ function scan(   c, nx, rest, j, k) {
 # ---------------------------------------------------------------- rules
 
 function mentions(t) {
+    return gmentions(t) ||
+           t ~ /push[ \t]([^\n;&|]*[ \t])?(--force|-[A-Za-z]*f[A-Za-z]*([ \t\n;&|]|$)|\+)/
+}
+
+# mentions() less its force push reading, which each caller adds its own way.
+function gmentions(t) {
     return t ~ /gh[ \t\n]+(pr[ \t\n]+merge|repo[ \t\n]+delete|auth[ \t\n]+switch|release[ \t\n]+create|issue[ \t\n]+close)/ ||
            t ~ /pulls\/[^\/ \t\n]+\/merge|mergePullRequest|enablePullRequestAutoMerge/ ||
            t ~ /niwa[ \t\n]+reap|unset[ \t\n]+GH_TOKEN/ ||
            tolower(t) ~ /prepare-release|release-prepare|prepare[ \t]+release/ ||
            t ~ /actions\/workflows\/[^ \t\n]*\/dispatches/ ||
-           t ~ /(^|[^A-Za-z0-9_.-])(curl|wget|nc|ncat|netcat)([ \t\n]|$)/ ||
-           t ~ /push[ \t]([^\n;&|]*[ \t])?(--force|-[A-Za-z]*f[A-Za-z]*([ \t\n;&|]|$)|\+)/
+           t ~ /(^|[^A-Za-z0-9_.-])(curl|wget|nc|ncat|netcat)([ \t\n]|$)/
 }
 
 # Code with its quotes and punctuation turned into blanks, so a call written
@@ -596,6 +607,41 @@ function mentions(t) {
 function loosen(t) {
     gsub(/[^A-Za-z0-9_.\/+=\n-]/, " ", t)
     return t
+}
+
+# Whether inline interpreter code t mentions a gated command, read as it is
+# and with its punctuation set aside. A force push needs the word git at most
+# three words before push, since an array push followed later by a + or a -f
+# test is ordinary code. A gh or niwa call also counts with up to two other
+# words before each of its words (an args key between program and arguments).
+function imentions(t,   u) {
+    u = loosen(t)
+    return gmentions(t) || gmentions(u) || gitpush(t) || gitpush(u) || spaced(u)
+}
+
+function gitpush(t) {
+    return t ~ /(^|[^A-Za-z0-9_.-])git[ \t\n]+([^ \t\n;&|]+[ \t\n]+)?([^ \t\n;&|]+[ \t\n]+)?([^ \t\n;&|]+[ \t\n]+)?push[ \t]([^\n;&|]*[ \t])?(--force|-[A-Za-z]*f[A-Za-z]*([ \t\n;&|]|$)|\+)/
+}
+
+# The words of u (code with its punctuation set aside) hold gh and one of its
+# gated subcommand pairs, or niwa and reap, each word at most three words past
+# the one before.
+function spaced(u,   w, n, i, p, q, np, pw) {
+    n = split(u, w, /[ \t\n]+/)
+    np = split("pr merge repo delete auth switch release create issue close", pw, " ")
+    for (i = 1; i <= n; i++) {
+        if (w[i] == "niwa" && near(w, n, i, "reap")) return 1
+        if (w[i] != "gh") continue
+        for (q = 1; q < np; q += 2)
+            if ((p = near(w, n, i, pw[q])) && near(w, n, p, pw[q + 1])) return 1
+    }
+    return 0
+}
+
+# The position of the word x among w[i + 1 .. i + 3] (none past n), or 0.
+function near(w, n, i, x,   j) {
+    for (j = i + 1; j <= i + 3 && j <= n; j++) if (w[j] == x) return j
+    return 0
 }
 
 function esc(c) {
@@ -608,9 +654,9 @@ function esc(c) {
 # The glob in word w (mask mk) as an anchored regular expression matching at
 # least what the glob could match. Sets gglob to 1 when w holds an active
 # glob at all; a word without one is a plain word. Forms read: * ? [...]
-# (read as any one character), zsh groups with | (an empty branch read as
-# .?), and the extendedglob forms
-# x# (read as .*), ^ negation (read as anything up to the next / ) or |),
+# (read as any one character, POSIX classes in it included), zsh groups
+# with | (an empty branch read as .?), and the extendedglob forms x# (read
+# as .*), ^ negation (read as anything up to the next / ) or |),
 # a~b (read as a) and (#...) flags (read as anything).
 function gre(w, mk,   L, j, c, out, d, e, cl, k, kd) {
     L = length(w); out = ""; d = 0; gglob = 0
@@ -624,7 +670,13 @@ function gre(w, mk,   L, j, c, out, d, e, cl, k, kd) {
             e = j + 1
             if (substr(w, e, 1) == "!" || substr(w, e, 1) == "^") e++
             if (substr(w, e, 1) == "]") e++
-            while (e <= L && substr(w, e, 1) != "]") e++
+            # A class [:alpha:], an equivalence class [=a=] or a collating
+            # symbol [.a.] inside the brackets is passed over whole.
+            while (e <= L && substr(w, e, 1) != "]") {
+                cl = substr(w, e + 1, 1)
+                if (substr(w, e, 1) == "[" && (cl == ":" || cl == "=" || cl == ".") && (k = index(substr(w, e + 2), cl "]")) > 0) e += k + 3
+                else e++
+            }
             if (e > L) { out = out esc(c); continue }
             # Any one character: wider than the set, and never a malformed
             # expression.
@@ -872,11 +924,12 @@ function rules(s, h, a, m,   x, k, meth, t, n, w, wd, merge, ep, writes, lx, r, 
                 rd = "ask"; rr = "git push --force"; return 1
             }
             # A pattern that could be a force flag or a +refspec, or starts
-            # with a glob (so could be any name on disk), or a word filled in
-            # at run time.
-            if ((!strict && segx[s, k]) || (isglob(s, k) && (substr(segm[s, k], 1, 1) == "a" && x ~ /^[*?[(^#]/ ||
+            # with a glob (so could be any name on disk). A word filled in at
+            # run time (by xargs or find) does not count, as a $VAR word
+            # does not: only a force the line spells out asks.
+            if (isglob(s, k) && (substr(segm[s, k], 1, 1) == "a" && x ~ /^[*?[(^#]/ ||
                 x ~ /^-[^-]/ || "-f" ~ gre(x, segm[s, k]) || "--force" ~ gre(x, segm[s, k]) ||
-                "--force-with-lease" ~ gre(x, segm[s, k])))) {
+                "--force-with-lease" ~ gre(x, segm[s, k]))) {
                 guessed = 1
                 rd = "ask"; rr = "git push --force"; return 1
             }
@@ -901,11 +954,29 @@ function rules(s, h, a, m,   x, k, meth, t, n, w, wd, merge, ep, writes, lx, r, 
     if (h ~ /^(bash|sh|zsh|dash|ksh|mksh|fish|csh|tcsh|pwsh|eval)$/) {
         t = body[s]
         for (k = a; k <= m; k++) t = t " " segw[s, k]
-        if (h != "eval" && a > m && body[s] == "") t = src   # reads the script from a pipe
+        if (h != "eval" && body[s] == "" && readsin(s, a, m)) t = t " " src   # reads the script from a pipe
         if (mentions(t)) { rd = "ask"; rr = "text handed to " h " mentions a gated command"; return 1 }
         return 0
     }
     return interp(s, h, a, m)
+}
+
+# Whether a shell given the words segw[s, a..m] reads its script from
+# standard input: no -c, and either -s (its words are then arguments) or no
+# script file among its words. The values of -o and -O (or +o, +O),
+# --rcfile and --init-file are not a script file.
+function readsin(s, a, m,   k, x, sf) {
+    sf = 0
+    for (k = a; k <= m; k++) {
+        x = segw[s, k]
+        if (x == "--" || x == "-") return sf || k == m
+        if (x ~ /^--/) { if (x ~ /^--(rcfile|init-file)$/) k++; continue }
+        if (x !~ /^[-+]/) return sf
+        if (x ~ /^-[A-Za-z]*c/) return 0
+        if (x ~ /^-[A-Za-z]*s/) sf = 1
+        if (x ~ /^[-+][A-Za-z]*[oO]$/) k++
+    }
+    return 1
 }
 
 # Inline code handed to an interpreter: the code after its inline flag (the
@@ -946,7 +1017,7 @@ function interp(s, h, a, m,   f, k, x, t, inl, pos, fileprog) {
         if (pos) return 0
         t = (body[s] != "") ? body[s] : src
     }
-    if (mentions(t) || mentions(loosen(t))) {
+    if (imentions(t)) {
         rd = "ask"; rr = "inline code handed to " h " mentions a gated command"; return 1
     }
     return 0
@@ -963,6 +1034,34 @@ function synth(s, a, m,   ns, k, n) {
     }
     segn[ns] = n; body[ns] = body[s]
     return ns
+}
+
+# Reads the short option cluster x (-abc) of a command whose letters in sv
+# take a value, as getopt does: sets ovl to the first such letter in x (""
+# when none) and ova to the rest of x after it, which is its value when not
+# empty. Returns 1 when the value is the next word instead.
+function cluster(x, sv,   j, c) {
+    ovl = ""; ova = ""
+    for (j = 2; j <= length(x); j++) {
+        c = substr(x, j, 1)
+        if (index(sv, c)) { ovl = c; ova = substr(x, j + 1); return ova == "" }
+    }
+    return 0
+}
+
+# The first word from k on in segment s that is not an option of a wrapper,
+# or m + 1. Short options come in clusters, the letters in sv taking a value
+# (cluster() above); a long option matching lv takes the next word unless
+# it is written with =; -- ends the options.
+function optskip(s, k, m, sv, lv,   x) {
+    for (; k <= m; k++) {
+        x = segw[s, k]
+        if (x == "--") return k + 1
+        if (x !~ /^-/) return k
+        if (x ~ /^--/) { if (lv != "" && x !~ /=/ && x ~ lv) k++; continue }
+        if (cluster(x, sv)) k++
+    }
+    return k
 }
 
 # Adds a word filled in at run time to the end of segment ns.
@@ -1006,7 +1105,7 @@ function shelltext(name, t) {
 }
 
 # Reads the command in words k..m of segment s.
-function evalcmd(s, k, m,   x, h, g, j, e, t, ns, n, rs, ng, ph) {
+function evalcmd(s, k, m,   x, h, g, j, e, t, ns, n, rs, ng, ph, c, v, sp) {
     while (k <= m) {
         if (segx[s, k]) break
         x = segw[s, k]
@@ -1015,25 +1114,38 @@ function evalcmd(s, k, m,   x, h, g, j, e, t, ns, n, rs, ng, ph) {
         if (x == "function" || x == "repeat") { k += 2; continue }
         if (x ~ /^[A-Za-z_][A-Za-z0-9_]*\+?=/) { k++; continue }
         h = headname(s, k)
+        # Each wrapper skips its options through optskip(), the letters and
+        # long options given to it taking a value.
         if (h ~ /^(command|builtin|exec|nohup|setsid|nocorrect|-)$/) {
-            for (k++; k <= m && segw[s, k] ~ /^-/; k++) if (segw[s, k] == "-a") k++
+            # command -v or -V only looks the name up, as type does.
+            if (h == "command")
+                for (j = k + 1; j <= m && segw[s, j] ~ /^-./ && segw[s, j] != "--"; j++)
+                    if (segw[s, j] ~ /^-[A-Za-z]*[vV]/) return
+            k = optskip(s, k + 1, m, "a", "")
             continue
         }
         if (h == "noglob") { noglob = 1; k++; continue }
-        if (h == "stdbuf") {
-            for (k++; k <= m && segw[s, k] ~ /^-/; k++) if (segw[s, k] ~ /^-[ioe]$/) k++
-            continue
-        }
+        if (h == "stdbuf") { k = optskip(s, k + 1, m, "ioe", "^--(input|output|error)$"); continue }
         if (h == "env") {
             for (k++; k <= m && (segw[s, k] ~ /^-/ || segw[s, k] ~ /^[A-Za-z_][A-Za-z0-9_]*=/); k++) {
                 x = segw[s, k]
-                if (x ~ /^(-u|-C|-P|--unset|--chdir)$/) k++
-                else if (x ~ /^(-S|--split-string)$/ || x ~ /^(-S.|--split-string=)/) {
+                if (x !~ /^-/ || x == "--") continue
+                sp = 0
+                if (x ~ /^--split-string=/) { t = substr(x, 16); sp = 1 }
+                else if (x == "--split-string") { t = (k < m) ? segw[s, k + 1] : ""; k++; sp = 1 }
+                else if (x ~ /^--/) { if (x ~ /^--(unset|chdir)$/) k++ }
+                else if (cluster(x, "uCPLUS")) {
+                    if (ovl == "S") { t = (k < m) ? segw[s, k + 1] : ""; sp = 1 }
+                    k++
+                }
+                else if (ovl == "S") { t = ova; sp = 1 }
+                if (sp) {
                     # The value is split at blanks into the command and its
-                    # first words; the words after it follow.
-                    if (x ~ /^(-S|--split-string)$/) { t = (k < m) ? segw[s, k + 1] : ""; k++ }
-                    else if (x ~ /^-S/) t = substr(x, 3)
-                    else t = substr(x, 16)
+                    # first words; the words after it follow. Unlike synth(),
+                    # the split words are new: each is taken literally (env
+                    # does its own quoting in the value, not modeled here), so
+                    # none is a glob or a brace, and only a $ marks one an
+                    # expansion.
                     ns = "x" (++nsyn); n = 0
                     while (match(t, /[^ \t\n]+/)) {
                         n++
@@ -1054,30 +1166,19 @@ function evalcmd(s, k, m,   x, h, g, j, e, t, ns, n, rs, ng, ph) {
             continue
         }
         if (h == "sudo") {
-            for (k++; k <= m && segw[s, k] ~ /^-/; k++) if (segw[s, k] ~ /^-[ugCDhprtUT]$/) k++
+            k = optskip(s, k + 1, m, "ugCDhprtUTR",
+                "^--(user|group|close-from|chdir|host|prompt|role|type|other-user|command-timeout|chroot)$")
             continue
         }
-        if (h == "doas") {
-            for (k++; k <= m && segw[s, k] ~ /^-/; k++) if (segw[s, k] ~ /^-[auC]$/) k++
-            continue
-        }
-        if (h == "nice") {
-            for (k++; k <= m && segw[s, k] ~ /^-/; k++) if (segw[s, k] == "-n") k++
-            continue
-        }
+        if (h == "doas") { k = optskip(s, k + 1, m, "auC", ""); continue }
+        if (h == "nice") { k = optskip(s, k + 1, m, "n", "^--adjustment$"); continue }
         if (h == "timeout" || h == "gtimeout") {
-            for (k++; k <= m && segw[s, k] ~ /^-/; k++) if (segw[s, k] ~ /^(-s|-k)$/) k++
-            k++
+            # The duration follows the options.
+            k = optskip(s, k + 1, m, "sk", "^--(signal|kill-after)$") + 1
             continue
         }
-        if (h == "time") {
-            for (k++; k <= m && segw[s, k] ~ /^-/; k++) if (segw[s, k] ~ /^(-o|-f|--output|--format)$/) k++
-            continue
-        }
-        if (h == "caffeinate") {
-            for (k++; k <= m && segw[s, k] ~ /^-/; k++) if (segw[s, k] ~ /^-[tw]$/) k++
-            continue
-        }
+        if (h == "time") { k = optskip(s, k + 1, m, "of", "^--(output|format)$"); continue }
+        if (h == "caffeinate") { k = optskip(s, k + 1, m, "tw", ""); continue }
         if (h == "arch") {
             for (k++; k <= m && segw[s, k] ~ /^-/; k++) if (segw[s, k] ~ /^(-arch|-e|-d)$/) k++
             continue
@@ -1097,22 +1198,37 @@ function evalcmd(s, k, m,   x, h, g, j, e, t, ns, n, rs, ng, ph) {
         }
         if (h == "watch") {
             # The words after the flags are joined and handed to sh -c.
-            for (k++; k <= m && segw[s, k] ~ /^-/; k++) if (segw[s, k] ~ /^(-n|--interval|-q|--equexit)$/) k++
+            k = optskip(s, k + 1, m, "nq", "^--(interval|equexit)$")
             t = ""
             for (j = k; j <= m; j++) t = t " " segw[s, j]
             shelltext("watch", t)
             continue
         }
         if (h == "xargs") {
+            # Options as optskip() reads them, but -I and -J (and -i, whose
+            # value can only be attached) set the replace string, and GNU -e
+            # and -l, and --eof, --max-lines and --replace, take a value only
+            # attached.
             rs = ""
             for (k++; k <= m && segw[s, k] ~ /^-/; k++) {
                 x = segw[s, k]
-                if (x ~ /^-[IJ]$/) { rs = (k < m) ? segw[s, k + 1] : ""; k++ }
-                else if (x ~ /^-[aEdLnPsRS]$/ || x ~ /^--(arg-file|delimiter|eof|max-args|max-lines|max-procs|max-chars|process-slot-var)$/) k++
-                else if (x ~ /^-I./) rs = substr(x, 3)
-                else if (x == "-i" || x == "--replace") rs = "{}"
-                else if (x ~ /^-i./) rs = substr(x, 3)
-                else if (x ~ /^--replace=/) rs = substr(x, 11)
+                if (x == "--") { k++; break }
+                if (x ~ /^--/) {
+                    if (x ~ /^--replace=/) rs = substr(x, 11)
+                    else if (x == "--replace") rs = "{}"
+                    else if (x ~ /^--(arg-file|delimiter|max-args|max-procs|max-chars|process-slot-var)$/) k++
+                    continue
+                }
+                for (j = 2; j <= length(x); j++) {
+                    c = substr(x, j, 1); v = substr(x, j + 1)
+                    if (index("IJaEdLnPsRS", c)) {
+                        if (v == "") { v = (k < m) ? segw[s, k + 1] : ""; k++ }
+                        if (c == "I" || c == "J") rs = v
+                        break
+                    }
+                    if (c == "i") { rs = (v == "") ? "{}" : v; break }
+                    if (c == "e" || c == "l") break
+                }
             }
             if (k > m) return
             # Read from input at run time: words holding the replace string,
@@ -1132,6 +1248,9 @@ function evalcmd(s, k, m,   x, h, g, j, e, t, ns, n, rs, ng, ph) {
         # The command name is an expansion: ask if a gated command would fit.
         # No grant and no exemption reaches a command the scanner cannot read.
         split("gh niwa git", g, " ")
+        # Strict: globs and run-time words count for nothing here, since the
+        # reading PR #66 reverted asked on ordinary lines run through a path
+        # held in a variable.
         strict = 1
         for (j = 1; j <= 3; j++)
             if (rules(s, g[j], k + 1, m)) { strict = 0; verdict("ask", "command name is not literal; would be " rr); return }
@@ -1161,6 +1280,8 @@ function evalcmd(s, k, m,   x, h, g, j, e, t, ns, n, rs, ng, ph) {
     }
     guessed = 0
     if (rules(s, h, k + 1, m)) {
+        # A match through a pattern or a run-time word goes through verdict(),
+        # so it never takes a grant or the exemption.
         if (guessed) verdict(rd, rr ", by a glob or a word given at run time")
         else if (ra != "") gated(rd, rr, ra)
         else verdict(rd, rr)
