@@ -138,8 +138,7 @@ reap() {
 }
 
 # unchanged CWD COMMAND: the verdict in CWD is the one the command gets with
-# no cwd at all, which is the verdict every session got before, and it is
-# not an allow.
+# no cwd at all, so the scratch workspace changes nothing for it.
 unchanged() {
     local cwd=$1 command=$2 want got
     want=$(run "$inst_hook" "" "$command")
@@ -148,6 +147,18 @@ unchanged() {
         "$(printf 'same  %q in %s' "$command" "${cwd#"$work"/}")" \
         "$(printf '%q' "$want")" "$(printf '%q' "$got")"
 }
+
+# asks CWD COMMAND: the decision is ask, whatever the reason.
+asks() {
+    local cwd=$1 command=$2 got
+    got=$(run "$inst_hook" "$cwd" "$command")
+    tally "$([ "${got%%	*}" = ask ] && echo ok || echo FAIL)" \
+        "$(printf 'ask   %q in %s' "$command" "${cwd#"$work"/}")" ask "$(printf '%q' "$got")"
+}
+
+# Rows run in order and some write state (a declaration, a workspace.toml)
+# that later rows read, so a row repeated further down checks a different
+# rule than its first run did.
 
 # --- Today's reap deny, with no cwd and in the host ---------------------
 reap deny  ''         'niwa reap'
@@ -233,10 +244,16 @@ do
     reap deny "$ws" "$c"
 done
 unchanged "$ws" 'bash -c "niwa reap"'
+# Text handed to a shell asks when a reap appears in it, after flags too.
+asks "$ws" 'bash -c "niwa reap"'
+asks "$ws" 'sh -c "niwa -C .. reap"'
+asks ""    'bash -c "niwa --no-progress reap"'
+asks ""    'eval "niwa -C /x reap"'
 
-# --- A reap after a flag that may take a value --------------------------
+# --- A reap the line doesn't spell out ---------------------------------
 # niwa's own flags take no value, but where the subcommand sits after one
-# that might can't be told from the line, so these are denied everywhere.
+# that might can't be told from the line, and a word the shell expands up to
+# the subcommand may become reap, so these are denied everywhere.
 for c in \
     'niwa -C .. reap' \
     'niwa -C ../x reap' \
@@ -246,13 +263,33 @@ for c in \
     'niwa --dir .. reap' \
     'niwa -C '"$host"' reap' \
     'niwa -C '"$inst"' reap --yes' \
-    'niwa destroy reap'
+    'niwa destroy reap' \
+    'niwa {reap,--no-progress}' \
+    'niwa re{a,}p' \
+    'niwa rea?' \
+    'niwa rea[p]' \
+    'niwa @(reap)' \
+    'niwa +(reap)' \
+    'niwa (reap)' \
+    'niwa --no-progress (reap)' \
+    'niwa *' \
+    'x=reap; niwa $x' \
+    'niwa "$x"' \
+    'niwa --no-progress $x' \
+    'niwa ${x:-reap}' \
+    'niwa $(echo reap)' \
+    'niwa `echo reap`'
 do
     reap deny "$ws" "$c"
     reap deny "$inst" "$c"
     reap deny "" "$c"
 done
 unchanged "$ws" 'sh -c "niwa reap"'
+# An expanded word after the subcommand is only an argument to it.
+reap allow ""    'niwa dispatch "$task" --name x'
+reap allow "$ws" 'niwa dispatch "$(cat brief.md)" --name x'
+reap allow ""    'niwa destroy $name'
+reap allow ""    'niwa --no-progress list *'
 
 # --- The cwd must be absolute and clean ---------------------------------
 reap deny  "scratch/ws"          'niwa reap'
@@ -297,6 +334,14 @@ mkdir -p "$d" "$work/scratch/linked-dir-target"
 : > "$work/scratch/linked-dir-target/workspace.toml"
 physical "$d" > "$work/scratch/linked-dir-target/scratch-check"
 ln -s "$work/scratch/linked-dir-target" "$d/.niwa"
+reap deny  "$d" 'niwa reap'
+
+# A workspace.toml that is a symlink to the host's, so niwa would run the
+# host's reap commands, with a right declaration beside it.
+d=$work/scratch/linked-config
+mkdir -p "$d/.niwa"
+ln -s "$host/.niwa/workspace.toml" "$d/.niwa/workspace.toml"
+physical "$d" > "$d/.niwa/scratch-check"
 reap deny  "$d" 'niwa reap'
 
 # A declaration that is a directory.
@@ -419,12 +464,13 @@ echo "$pass passed, $fail failed"
 # Every row must have run: each row outside a loop once, and each loop's
 # rows once per command it lists (the first loop runs one row per command,
 # the second three).
-declared=$(grep -cE '^(reap|unchanged) ' "${BASH_SOURCE[0]}")
+declared=$(grep -cE '^(reap|unchanged|asks) ' "${BASH_SOURCE[0]}")
 read -r first second < <(awk '/^for c in/ { n++; on = 1; next } /^do$/ { on = 0 }
     on && /^    [\047$"]/ { c[n]++ } END { print c[1] + 0, c[2] + 0 }' "${BASH_SOURCE[0]}")
 expected=$((declared + first + 3 * second))
 if [ $((pass + fail)) -ne "$expected" ] || [ "$declared" -eq 0 ]; then
-    echo "ran $((pass + fail)) rows, file declares $expected" >&2
+    echo "ran $((pass + fail)) rows, file declares $expected" \
+        "($declared single rows, $first commands in the first loop, $second in the second)" >&2
     exit 1
 fi
 [ "$fail" -eq 0 ]
