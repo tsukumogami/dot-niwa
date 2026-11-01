@@ -553,6 +553,17 @@ row ask   "deno eval 'new Deno.Command(\"gh\", {args: [\"pr\", \"merge\", \"12\"
 row ask   "deno eval 'new Deno.Command(\"niwa\", {args: [\"reap\"]}).outputSync()'"
 row ask   "deno eval 'new Deno.Command(\"gh\", {args: [\"issue\", \"close\", \"5\"]}).outputSync()'"
 row ask   "python3 -c 'import subprocess; subprocess.run([\"git\", \"push\", \"-f\", \"origin\", \"x\"])'"
+# Any number of git options before push, and an options object or a -R
+# option between gh and its subcommand.
+row ask   "python3 -c 'import subprocess; subprocess.run([\"git\", \"-c\", \"a.b=1\", \"-c\", \"c.d=2\", \"push\", \"--force\", \"origin\", \"x\"])'"
+row ask   "node -e 'require(\"child_process\").execSync(\"git --git-dir=r/.git --work-tree=r -c a.b=1 push -f origin x\")'"
+row ask   "deno eval 'new Deno.Command(\"gh\", {cwd: \"x\", args: [\"pr\", \"merge\", \"12\"]}).outputSync()'"
+row ask   "deno eval 'new Deno.Command(\"gh\", {stdout: \"piped\", env: {A: \"b\"}, args: [\"issue\", \"close\", \"5\"]}).outputSync()'"
+row ask   "deno eval 'new Deno.Command(\"gh\", {args: [\"-R\", \"o/r\", \"pr\", \"merge\", \"12\"]}).outputSync()'"
+row ask   "deno eval 'new Deno.Command(\"gh\", {args: [\"--repo\", \"o/r\", \"issue\", \"close\", \"5\"]}).outputSync()'"
+row ask   "deno eval 'new Deno.Command(\"niwa\", {cwd: \"x\", stdout: \"piped\", env: {A: \"b\"}, args: [\"reap\"]}).outputSync()'"
+# The words gh, pr and merge far apart in unrelated strings.
+row allow "python3 -c 'print(\"gh\"); print(\"one two three four five six seven eight nine ten eleven twelve\"); print(\"pr\", \"merge\")'"
 
 # Wrapper options read as getopt reads them: a cluster whose last letter
 # takes a value, or a long option that takes one without =, takes the next

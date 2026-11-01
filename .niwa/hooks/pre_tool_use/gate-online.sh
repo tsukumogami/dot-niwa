@@ -603,44 +603,49 @@ function gmentions(t) {
 }
 
 # Code with its quotes and punctuation turned into blanks, so a call written
-# as a list of strings reads as the command it names.
-function loosen(t) {
-    gsub(/[^A-Za-z0-9_.\/+=\n-]/, " ", t)
+# as a list of strings reads as the command it names. With keep set, the
+# statement separators ; & and | stay.
+function loosen(t, keep) {
+    if (keep) gsub(/[^A-Za-z0-9_.\/+=\n;&|-]/, " ", t)
+    else gsub(/[^A-Za-z0-9_.\/+=\n-]/, " ", t)
     return t
 }
 
 # Whether inline interpreter code t mentions a gated command, read as it is
-# and with its punctuation set aside. A force push needs the word git at most
-# three words before push, since an array push followed later by a + or a -f
-# test is ordinary code. A gh or niwa call also counts with up to two other
-# words before each of its words (an args key between program and arguments).
+# and with its punctuation set aside. A force push needs the word git before
+# push with no statement separator between them, since an array push followed
+# later by a + or a -f test is ordinary code. A gh or niwa call also counts
+# with its words spread over a few more (an options object, or a -R option,
+# between program and subcommand).
 function imentions(t,   u) {
     u = loosen(t)
-    return gmentions(t) || gmentions(u) || gitpush(t) || gitpush(u) || spaced(u)
+    return gmentions(t) || gmentions(u) || gitpush(t) || gitpush(loosen(t, 1)) || spaced(u)
 }
 
 function gitpush(t) {
-    return t ~ /(^|[^A-Za-z0-9_.-])git[ \t\n]+([^ \t\n;&|]+[ \t\n]+)?([^ \t\n;&|]+[ \t\n]+)?([^ \t\n;&|]+[ \t\n]+)?push[ \t]([^\n;&|]*[ \t])?(--force|-[A-Za-z]*f[A-Za-z]*([ \t\n;&|]|$)|\+)/
+    return t ~ /(^|[^A-Za-z0-9_.-])git[ \t\n]+([^ \t\n;&|]+[ \t\n]+)*push[ \t]([^\n;&|]*[ \t])?(--force|-[A-Za-z]*f[A-Za-z]*([ \t\n;&|]|$)|\+)/
 }
 
-# The words of u (code with its punctuation set aside) hold gh and one of its
-# gated subcommand pairs, or niwa and reap, each word at most three words past
-# the one before.
-function spaced(u,   w, n, i, p, q, np, pw) {
+# The words of u (code with its punctuation set aside) hold gh followed by one
+# of its gated subcommand pairs in order, or niwa followed by reap, all within
+# the twelve words after gh or niwa.
+function spaced(u,   w, n, i, p, q, np, pw, lim) {
     n = split(u, w, /[ \t\n]+/)
     np = split("pr merge repo delete auth switch release create issue close", pw, " ")
     for (i = 1; i <= n; i++) {
-        if (w[i] == "niwa" && near(w, n, i, "reap")) return 1
+        lim = i + 12
+        if (lim > n) lim = n
+        if (w[i] == "niwa" && near(w, lim, i, "reap")) return 1
         if (w[i] != "gh") continue
         for (q = 1; q < np; q += 2)
-            if ((p = near(w, n, i, pw[q])) && near(w, n, p, pw[q + 1])) return 1
+            if ((p = near(w, lim, i, pw[q])) && near(w, lim, p, pw[q + 1])) return 1
     }
     return 0
 }
 
-# The position of the word x among w[i + 1 .. i + 3] (none past n), or 0.
-function near(w, n, i, x,   j) {
-    for (j = i + 1; j <= i + 3 && j <= n; j++) if (w[j] == x) return j
+# The position of the first word x among w[i + 1 .. lim], or 0.
+function near(w, lim, i, x,   j) {
+    for (j = i + 1; j <= lim; j++) if (w[j] == x) return j
     return 0
 }
 
