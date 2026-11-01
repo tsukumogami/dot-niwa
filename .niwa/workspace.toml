@@ -8,6 +8,8 @@ default_worktree_repo = "tsuku"
 
 [[sources]]
 org = "tsukumogami"
+# The org has grown past niwa's default discovery limit of 10 repositories; the limit is raised just past the current count so a runaway org still trips it.
+max_repos = 12
 
 [groups.public]
 visibility = "public"
