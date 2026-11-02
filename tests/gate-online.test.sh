@@ -587,6 +587,8 @@ row ask   "python3 -c 'import subprocess; subprocess.run([\"gh\", \"repo\", \"--
 row ask   "python3 -c 'import subprocess; subprocess.run([\"niwa\", \"--no-progress\", \"reap\"])'"
 row ask   "deno eval 'new Deno.Command(\"niwa\", {args: [\"-C\", \"d\", \"reap\"]}).outputSync()'"
 row ask   "python3 -c 'import subprocess; subprocess.run([\"git\", \"push\", \"origin\", \"+:main\"])'"
+row ask   "python3 -c 'import subprocess, sys; b = sys.argv[1]; subprocess.run([\"git\", \"push\", \"origin\", f\"+{b}\"])'"
+row allow "python3 -c 'import subprocess; subprocess.run([\"git\", \"push\", \"origin\", \"main\"]); n = 1; print(n + 1)'"
 row ask   "python3 -c 'import os, sys; d = sys.argv[1]; os.system(f\"git -C {d} push -f origin x\")'"
 row ask   "python3 -c 'import os; os.system(\"git -c a.b=\\\"x;y\\\" push -f origin x\")'"
 row ask   "python3 -c 'import subprocess; subprocess.run([\"git\", \"-c\", \";\", \"push\", \"-f\", \"origin\", \"x\"])'"
@@ -777,6 +779,9 @@ row allow 'echo main | xargs git push origin'
 row allow 'command -v curl >/dev/null || echo missing'
 row allow 'if command -v wget >/dev/null; then echo y; fi'
 row allow 'command -V gh'
+# A zsh glob group in a path argument is part of the file pattern, not a
+# subshell, even when it lists a network tool name.
+row allow 'ls -d docs/(curl|wget).md'
 row allow 'command -pv niwa'
 
 # ===================================================== the dispatch's grant

@@ -640,6 +640,7 @@ function imentions(t,   n, i, j, k, x, y, np, pw, q, lim) {
         if (x == "git" && forcepush(i, n)) return 1
         if (x == "niwa" && iw[flags(i + 1, n)] == "reap") return 1
         if (x == "reap") {
+            # Back over flags to the key; -C is the one niwa flag with a value.
             for (k = i - 1; k > 1 && (iw[k] ~ /^-/ || iw[k - 1] == "-C"); k--) ;
             if (k > 1 && iw[k] ~ /^(args|argv|cmd)[:=]*$/)
                 for (j = k - 1; j >= 1 && j >= i - 24; j--) {
@@ -669,12 +670,15 @@ function flags(k, n) {
 # Splits inline code t into words iw[1..n], the line of each in il[]: words
 # end at blanks, quotes, backslashes, brackets, parentheses, braces and
 # commas, and lose any ; & or | at their ends. A word left as only : or =
-# (after a quoted key such as "args":) is dropped. Returns n. forcepush()
-# reads iw[] and il[], so iwords() runs first.
+# (after a quoted key such as "args":) is dropped, so a value that was only
+# a separator leaves nothing behind. A + right before { (an interpolated
+# refspec) keeps a word, read as +_. Returns n. forcepush() reads iw[] and
+# il[], so iwords() runs first.
 function iwords(t,   L, nl, p, c, i, k, n, x) {
     delete iw; delete il
     nl = split(t, L, "\n"); n = 0
     for (i = 1; i <= nl; i++) {
+        gsub(/\+\{/, "+_{", L[i])
         c = split(L[i], p, "[] \t\r\"\047`,()[{}\\\\]+")
         for (k = 1; k <= c; k++) {
             x = p[k]
@@ -689,7 +693,10 @@ function iwords(t,   L, nl, p, c, i, k, n, x) {
 # subcommand name between them, and a force flag (alone or in a cluster) or a
 # +refspec follows push on its line. The value after an option gitvalue()
 # names is stepped over, so a directory named like a subcommand still counts
-# as a value.
+# as a value, unless that next word is push itself (the value was only a
+# separator, which iwords() dropped). The stop list holds the common
+# subcommands, not all of them: a name missing from it can only make the
+# check ask more, never miss a push.
 function forcepush(i, n,   j, p, lim) {
     lim = i + 24
     if (lim > n) lim = n
