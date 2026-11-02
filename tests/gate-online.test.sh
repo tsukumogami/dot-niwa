@@ -599,6 +599,58 @@ row allow "python3 -c 'import subprocess; subprocess.run([\"git\", \"-C\", \"rep
 # workflow asks.
 row allow "python3 -c 'import subprocess; subprocess.run([\"gh\", \"workflow\", \"run\", \"ci.yml\"])'"
 row ask   "python3 -c 'import subprocess; subprocess.run([\"gh\", \"workflow\", \"run\", \"prepare-release.yml\"])'"
+# A workflow selector the code fills in, or a workflow id, can't be read, as
+# on the shell path; a literal .yml name can.
+row ask   "python3 -c 'import subprocess, sys; wf = sys.argv[1]; subprocess.run([\"gh\", \"workflow\", \"run\", wf])'"
+row ask   "node -e 'require(\"child_process\").execSync(\"gh workflow run \" + process.argv[1])'"
+row ask   "python3 -c 'import subprocess; subprocess.run([\"gh\", \"workflow\", \"run\", \"98765\"])'"
+row allow "node -e 'require(\"child_process\").execSync(\"gh workflow run ci.yml --ref main\")'"
+# Only git options between git and push, however many, with a value written
+# as interpolation or joined pieces, or an options object of many keys before
+# the args key; force as -fo, or a refspec starting + then @ or :.
+row ask   "deno eval 'new Deno.Command(\"git\", {cwd: \"x\", stdout: \"piped\", stderr: \"piped\", stdin: \"null\", clearEnv: false, env: {GIT_TERMINAL_PROMPT: \"0\", LANG: \"C\", HOME: \"/h\"}, uid: 1, gid: 1, args: [\"push\", \"-f\", \"origin\", \"x\"]}).outputSync()'"
+row ask   "python3 -c 'import os; os.system(\"git -c a=1 -c b=2 -c c=3 -c d=4 -c e=5 -c f=6 -c g=7 -c h=8 -c i=9 -c j=10 -c k=11 -c l=12 -c m=13 push -f origin x\")'"
+row ask   "python3 -c 'import subprocess, sys; n = sys.argv[1]; subprocess.run([\"git\", \"-c\", f\"user.name={n}\", \"push\", \"-f\", \"origin\", \"x\"])'"
+row ask   "node -e 'const d = process.argv[1]; require(\"child_process\").execSync(\`git -C \${d}/sub push --force origin x\`)'"
+row ask   "python3 -c 'import os; os.system(\"git push -fo ci.skip origin main\")'"
+row ask   "node -e 'require(\"child_process\").execFileSync(\"git\", [\"push\", \"origin\", \"+@{u}:main\"])'"
+row ask   "node -e 'require(\"child_process\").execFileSync(\"git\", [\"push\", \"origin\", \"+:refs/heads/x\"])'"
+# A -R or -C value the code fills in, between the gh pair words or before
+# reap.
+row ask   "python3 -c 'import subprocess; o, r = \"a\", \"b\"; subprocess.run([\"gh\", \"pr\", \"-R\", f\"{o}/{r}\", \"merge\", \"1\"])'"
+row ask   "deno eval 'const d = \"w\"; new Deno.Command(\"niwa\", {args: [\"-C\", \`\${d}/x\`, \"reap\"]}).outputSync()'"
+# Ordinary code: a word that is not a git option between git and push, a
+# -file, -format or -fPIC word on the line of a plain push, and a -> or --
+# between gh pair words are no gated call.
+row allow "python3 -c 'from git import Repo; git = Repo(\".\"); jobs = {\"push\": \"-f\"}; print(jobs)'"
+row allow "python3 -c 'import subprocess; subprocess.run([\"git\", \"push\", \"origin\", \"main\"]); subprocess.run([\"cc\", \"-fPIC\", \"-c\", \"x.c\"])'"
+row allow "node -e 'require(\"child_process\").execSync(\"git push origin main\"); console.log(\"-file\", \"-format\")'"
+row allow "python3 -c 'print(\"gh pr -> merge queue\")'"
+row allow "python3 -c 'print(\"gh issue -- close it later\")'"
+# Between git and push: a spread or splat of a list of options, git held in
+# a variable, a string prefix before a flag, a quoted value holding blanks or
+# a subcommand name, an options object whose value names a subcommand, and
+# --attr-source with its value. A literal workflow name after a --ref value.
+row ask   "python3 -c 'import subprocess; subprocess.run([\"git\", *opts, \"push\", \"-f\"])'"
+row ask   "node -e 'const {spawn} = require(\"child_process\"); spawn(\"git\", [...base, \"push\", \"-f\"])'"
+row ask   "python3 -c 'import subprocess; g = \"git\"; subprocess.run([g, \"push\", \"-f\"])'"
+row ask   "python3 -c 'import subprocess; subprocess.run([\"git\", f\"--git-dir={d}\", \"push\", \"-f\"])'"
+row ask   "python3 -c 'import subprocess; subprocess.run([\"git\", \"-c\", \"core.sshCommand=ssh -i k\", \"push\", \"-f\"])'"
+row ask   "python3 -c 'import os; os.system(\"git -C \\\"/tmp/my log\\\" push -f origin x\")'"
+row ask   "deno eval 'new Deno.Command(\"git\", {cwd: \"config\", args: [\"push\", \"-f\", \"origin\", \"x\"]}).outputSync()'"
+row ask   "python3 -c 'import subprocess; subprocess.run([\"git\", \"--attr-source\", \"log\", \"push\", \"-f\"])'"
+row allow "python3 -c 'import subprocess; subprocess.run([\"gh\", \"workflow\", \"run\", \"--ref\", \"main\", \"ci.yml\"])'"
+# A -- after a flag between gh pair words still reaches the second word; a
+# -- right after the first word is text.
+row ask   "python3 -c 'import subprocess; subprocess.run([\"gh\", \"release\", \"-R\", \"o/r\", \"--\", \"create\", \"v1\"])'"
+row allow "python3 -c 'import subprocess; subprocess.run([\"gh\", \"release\", \"view\", \"--json\", \"tagName\"]); print(\"release --\", \"create notes by hand\")'"
+# Ordinary code these readings could reach: git assigned to a name that is
+# then used as data, a quoted option value before another subcommand, and an
+# args key in a later statement than the git call.
+row allow "python3 -c 'import subprocess; exe = \"git\"; jobs = []; jobs.append(exe); print(\"push\", \"-f\")'"
+row allow "python3 -c 'import subprocess; subprocess.run([\"git\", \"-c\", \"core.pager=cat\", \"log\", \"-1\"]); print(\"push\", \"-f\")'"
+row allow "python3 -c 'import os; os.system(\"git -C \\\"my repo\\\" log -1\"); print(\"push\", \"-f\")'"
+row allow "deno eval 'const c = new Deno.Command(\"git\", {cwd: \"repo\"}); const opts = {args: [\"push\", \"-f\"]}; console.log(c, opts)'"
 # The words gh, pr and merge far apart in unrelated strings.
 row allow "python3 -c 'print(\"gh\"); print(\"one two three four five six seven eight nine ten eleven twelve\"); print(\"thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty more words\"); print(\"pr\", \"merge\")'"
 # A gh, niwa or git call that is not the gated one, with a gated word later
