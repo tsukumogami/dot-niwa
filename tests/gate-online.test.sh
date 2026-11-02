@@ -572,6 +572,31 @@ row ask   "deno eval 'new Deno.Command(\"niwa\", {cwd: \"x\", stdout: \"piped\",
 row ask   "python3 -c 'import subprocess; subprocess.run([\"git\", \"-c\", \"a.b=x;y\", \"push\", \"-f\", \"origin\", \"x\"])'"
 row ask   "python3 -c 'import subprocess; subprocess.run([\"git\", \"-c\", \"a.b=x|y\", \"-c\", \"c.d=1&2\", \"push\", \"--force\", \"origin\", \"x\"])'"
 row ask   "python3 -c 'import os; os.system(\"git -c \\\"a.b=x;y\\\" push -f origin x\")'"
+# An options object before the args key of a git call, a quoted key, and a
+# git option the push rule already knew takes a value.
+row ask   "deno eval 'new Deno.Command(\"git\", {cwd: \"x\", args: [\"push\", \"-f\", \"origin\", \"x\"]}).outputSync()'"
+row ask   "deno eval 'new Deno.Command(\"git\", {\"cwd\": \"x\", \"args\": [\"push\", \"--force\", \"origin\", \"x\"]}).outputSync()'"
+row ask   "deno eval 'new Deno.Command(\"niwa\", {\"cwd\": \"x\", \"args\": [\"reap\"]}).outputSync()'"
+row ask   "python3 -c 'import subprocess; subprocess.run([\"git\", \"--super-prefix\", \"p/\", \"push\", \"-f\", \"origin\", \"x\"])'"
+row allow "deno eval 'new Deno.Command(\"git\", {cwd: \"x\", args: [\"push\", \"origin\", \"x\"]}).outputSync()'"
+# A flag between gh subcommand words or between niwa and reap, an option
+# value written as interpolation or with a quote inside it, a separator
+# alone as the value, and force in a flag cluster or a refspec starting @.
+row ask   "python3 -c 'import subprocess; subprocess.run([\"gh\", \"pr\", \"-R\", \"o/r\", \"merge\", \"1\"])'"
+row ask   "python3 -c 'import subprocess; subprocess.run([\"gh\", \"repo\", \"--repo\", \"o/r\", \"delete\", \"--yes\"])'"
+row ask   "python3 -c 'import subprocess; subprocess.run([\"niwa\", \"--no-progress\", \"reap\"])'"
+row ask   "deno eval 'new Deno.Command(\"niwa\", {args: [\"-C\", \"d\", \"reap\"]}).outputSync()'"
+row ask   "python3 -c 'import subprocess; subprocess.run([\"git\", \"push\", \"origin\", \"+:main\"])'"
+row ask   "python3 -c 'import os, sys; d = sys.argv[1]; os.system(f\"git -C {d} push -f origin x\")'"
+row ask   "python3 -c 'import os; os.system(\"git -c a.b=\\\"x;y\\\" push -f origin x\")'"
+row ask   "python3 -c 'import subprocess; subprocess.run([\"git\", \"-c\", \";\", \"push\", \"-f\", \"origin\", \"x\"])'"
+row ask   "python3 -c 'import subprocess; subprocess.run([\"git\", \"push\", \"-fo\", \"x\", \"origin\", \"main\"])'"
+row ask   "python3 -c 'import subprocess; subprocess.run([\"git\", \"push\", \"origin\", \"+@:main\"])'"
+row allow "python3 -c 'import subprocess; subprocess.run([\"git\", \"-C\", \"repo\", \"log\", \"-1\"]); print(\"push\", \"-f\")'"
+# A workflow run gets the verdict the shell path gives it: only a release
+# workflow asks.
+row allow "python3 -c 'import subprocess; subprocess.run([\"gh\", \"workflow\", \"run\", \"ci.yml\"])'"
+row ask   "python3 -c 'import subprocess; subprocess.run([\"gh\", \"workflow\", \"run\", \"prepare-release.yml\"])'"
 # The words gh, pr and merge far apart in unrelated strings.
 row allow "python3 -c 'print(\"gh\"); print(\"one two three four five six seven eight nine ten eleven twelve\"); print(\"thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty more words\"); print(\"pr\", \"merge\")'"
 # A gh, niwa or git call that is not the gated one, with a gated word later

@@ -615,16 +615,15 @@ function loosen(t) {
 # aside. Then three shapes over the words of the code (split at blanks,
 # quotes, brackets, parentheses and commas, so a quoted option value holding
 # ; & or | stays one word):
-#   - git, then only git options (a word starting with -, and the value word
-#     after -c, -C, --git-dir, --work-tree, --namespace, --exec-path or
-#     --config-env given without =) or an args, argv or cmd key, then push,
-#     then a force flag (-f, --force, --force-with-lease) or a +refspec
-#     later on the same line as push. Any other word between git and push
-#     (git rev-list, git branch) is no push.
-#   - gh, then within its next 24 words one of its gated subcommand pairs as
-#     two adjacent words (an options object or -R before the pair is fine).
-#   - niwa directly followed by reap, or reap right after an args, argv or
-#     cmd key with niwa at most 24 words before it.
+#   - git, then within its next 24 words push with no other git subcommand
+#     name between them (options, their values, an options object or
+#     interpolated text may sit there), then a force flag or a +refspec later
+#     on the same line as push. git rev-list or git branch before a later
+#     push is no push.
+#   - gh, then within its next 24 words one of its gated subcommand pairs,
+#     with only flags (and the value of -R or --repo) between the two words.
+#   - niwa followed by reap past any flags, or reap after an args, argv or
+#     cmd key (and any flags) with niwa at most 24 words before it.
 # The windows are bounded on purpose: wider or unordered readings asked on
 # ordinary code (a gh pr list followed by a variable named merge, a
 # git rev-list followed by an array push). Code that spreads a command
@@ -632,33 +631,46 @@ function loosen(t) {
 # force flag on the line after push), is out of reach, as code that builds
 # the command from pieces is. Shell text is not read this way: it goes
 # through mentions().
-function imentions(t,   n, i, j, x, y, np, pw, q, lim) {
+function imentions(t,   n, i, j, k, x, y, np, pw, q, lim) {
     if (gmentions(t) || gmentions(loosen(t))) return 1
     n = iwords(t)
-    np = split("pr merge repo delete auth switch release create issue close workflow run", pw, " ")
+    np = split("pr merge repo delete auth switch release create issue close", pw, " ")
     for (i = 1; i <= n; i++) {
         x = iw[i]; sub(/.*\//, "", x)
         if (x == "git" && forcepush(i, n)) return 1
-        if (x == "niwa" && i < n && iw[i + 1] == "reap") return 1
-        if (x == "reap" && i > 2 && iw[i - 1] ~ /^(args|argv|cmd)[:=]*$/)
-            for (j = i - 2; j >= 1 && j >= i - 24; j--) {
-                y = iw[j]; sub(/.*\//, "", y)
-                if (y == "niwa") return 1
-            }
+        if (x == "niwa" && iw[flags(i + 1, n)] == "reap") return 1
+        if (x == "reap") {
+            for (k = i - 1; k > 1 && (iw[k] ~ /^-/ || iw[k - 1] == "-C"); k--) ;
+            if (k > 1 && iw[k] ~ /^(args|argv|cmd)[:=]*$/)
+                for (j = k - 1; j >= 1 && j >= i - 24; j--) {
+                    y = iw[j]; sub(/.*\//, "", y)
+                    if (y == "niwa") return 1
+                }
+        }
         if (x == "gh") {
             lim = i + 24
             if (lim > n - 1) lim = n - 1
             for (j = i + 1; j <= lim; j++)
                 for (q = 1; q < np; q += 2)
-                    if (iw[j] == pw[q] && iw[j + 1] == pw[q + 1]) return 1
+                    if (iw[j] == pw[q] && iw[flags(j + 1, n)] == pw[q + 1]) return 1
         }
     }
     return 0
 }
 
+# The index of the first word from iw[k] on that is not a flag, stepping over
+# the value of -R or --repo (gh) and -C (niwa); n + 1 when every word left is
+# a flag.
+function flags(k, n) {
+    while (k <= n && iw[k] ~ /^-/) k += (iw[k] ~ /^(-R|--repo|-C)$/) ? 2 : 1
+    return k
+}
+
 # Splits inline code t into words iw[1..n], the line of each in il[]: words
 # end at blanks, quotes, backslashes, brackets, parentheses, braces and
-# commas, and lose any ; & or | at their ends. Returns n.
+# commas, and lose any ; & or | at their ends. A word left as only : or =
+# (after a quoted key such as "args":) is dropped. Returns n. forcepush()
+# reads iw[] and il[], so iwords() runs first.
 function iwords(t,   L, nl, p, c, i, k, n, x) {
     delete iw; delete il
     nl = split(t, L, "\n"); n = 0
@@ -667,26 +679,37 @@ function iwords(t,   L, nl, p, c, i, k, n, x) {
         for (k = 1; k <= c; k++) {
             x = p[k]
             gsub(/^[;&|]+|[;&|]+$/, "", x)
-            if (x != "") { iw[++n] = x; il[n] = i }
+            if (x != "" && x !~ /^[:=]+$/) { iw[++n] = x; il[n] = i }
         }
     }
     return n
 }
 
-# Whether the words after git at iw[i] are git options and then push, with a
-# force flag or +refspec later on the line of push.
-function forcepush(i, n,   j, p) {
-    for (j = i + 1; j <= n; j++) {
+# Whether git at iw[i] reaches push within 24 words with no other git
+# subcommand name between them, and a force flag (alone or in a cluster) or a
+# +refspec follows push on its line. The value after an option gitvalue()
+# names is stepped over, so a directory named like a subcommand still counts
+# as a value.
+function forcepush(i, n,   j, p, lim) {
+    lim = i + 24
+    if (lim > n) lim = n
+    for (j = i + 1; j <= lim; j++) {
         if (iw[j] == "push") break
-        if (iw[j] ~ /^(-c|-C|--git-dir|--work-tree|--namespace|--exec-path|--config-env)$/) { j++; continue }
-        if (iw[j] ~ /^-/ || iw[j] ~ /^(args|argv|cmd)[:=]*$/) continue
-        return 0
+        if (gitvalue(iw[j]) && iw[j + 1] != "push") { j++; continue }
+        if (iw[j] ~ /^(add|am|apply|archive|bisect|blame|branch|bundle|cat-file|checkout|cherry|cherry-pick|clean|clone|commit|config|count-objects|describe|diff|diff-index|diff-tree|difftool|fetch|for-each-ref|format-patch|fsck|gc|grep|hash-object|help|init|log|ls-files|ls-remote|ls-tree|merge|merge-base|mergetool|mv|name-rev|notes|pull|range-diff|rebase|reflog|remote|repack|replace|reset|restore|rev-list|rev-parse|revert|rm|shortlog|show|show-ref|sparse-checkout|stash|status|submodule|switch|symbolic-ref|tag|update-index|update-ref|var|verify-commit|version|whatchanged|worktree|write-tree)$/) return 0
     }
-    if (j > n) return 0
+    if (j > lim) return 0
     p = j
     for (j = p + 1; j <= n && il[j] == il[p]; j++)
-        if (iw[j] ~ /^(-[uqvn46d]*f[uqvn46d]*|--force|--force-with-lease(=.*)?)$/ || iw[j] ~ /^\+[A-Za-z0-9_.\/]/) return 1
+        if (iw[j] ~ /^(-[uqvn46d]*f[A-Za-z0-9]*|--force|--force-with-lease(=.*)?)$/ || iw[j] ~ /^\+[A-Za-z0-9_.\/@:$]/) return 1
     return 0
+}
+
+# Whether x is a git global option whose value is the next word. The push
+# rule and the inline-code check both read the git options through this one
+# list.
+function gitvalue(x) {
+    return x ~ /^(-C|-c|--git-dir|--work-tree|--namespace|--exec-path|--super-prefix|--config-env)$/
 }
 
 function esc(c) {
@@ -958,7 +981,7 @@ function rules(s, h, a, m,   x, k, meth, t, n, w, wd, merge, ep, writes, lx, r, 
     if (h == "git") {
         for (k = a; k <= m; k++) {
             x = segw[s, k]
-            if (x ~ /^(-C|-c|--git-dir|--work-tree|--namespace|--exec-path|--super-prefix|--config-env)$/) k++
+            if (gitvalue(x)) k++
             else if (x !~ /^-/) break
         }
         if (k > m || !(r = kw(s, k, "push"))) return 0
