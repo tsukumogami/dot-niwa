@@ -68,17 +68,18 @@
 #     interpreter reads from a heredoc, here-string or pipe when it is given
 #     no script) that mentions a gated command, read with its quotes and
 #     punctuation set aside, so a call written as a list of strings counts.
-#     Two readings are joined and either one asks. The strict one walks
+#     Three readings are joined and any one asks. The strict walk goes
 #     from program to subcommand past an options object, or flags and their
 #     values (one written as interpolation or quoted with blanks too), and
 #     takes a force push as git (or a name git was assigned to) followed by
 #     push with only git options, or a spread list of them, between them; a
 #     gh workflow run there asks unless its selector is a literal .yml or
-#     .yaml name. The wide one, the reading the hook used before the strict
+#     .yaml name. The wide reading, the one the hook used before the strict
 #     walk, takes gh followed within a few words by a gated subcommand pair,
 #     or niwa by reap, whatever lies between, and git before push on one
-#     statement with a force flag or plus sign after it. The two denied
-#     pairs also count named anywhere in the code in any order. The union
+#     statement with a force flag or plus sign after it. The denied-pair
+#     reading takes the words of a denied command (pr merge, repo delete,
+#     niwa reap) named anywhere in the code in any order. The union
 #     asks on some ordinary code (a safe gh or niwa call followed by a
 #     printed merge or reap word; printed text holding git, push and a plus
 #     sign), and that is accepted: an ordinary line the wide reading asks on
@@ -626,10 +627,9 @@ function loosen(t, keep) {
 
 # Whether inline interpreter code t mentions a gated command. First the
 # patterns mentions() uses, on the code as it is and with its punctuation set
-# aside, and the deny pairs named in any order (comention()). Then four
-# shapes over the words of the code (split at blanks, quotes, brackets,
-# parentheses and commas, so a quoted option value holding ; & or | stays
-# one word):
+# aside. Then four shapes over the words of the code (split at blanks,
+# quotes, brackets, parentheses and commas, so a quoted option value holding
+# ; & or | stays one word):
 #   - git (or a name git was assigned to earlier in the code), then push
 #     with only git options between them: flags, a spread or splat of a
 #     list (...opts, *opts), a string prefix such as f or rb before a flag,
@@ -658,15 +658,16 @@ function loosen(t, keep) {
 # or -> in code is no flag; between gh pair words, or between niwa and reap,
 # a -- counts only after a flag (alone it asked on ordinary text such as
 # "release --" before "create"). A flag ending = (--git-dir=)
-# takes the next word as its value. These windows are bounded, but they are
-# not the whole check: interp() asks when either this walk or the wider
-# reading below, wmentions(), finds a gated command, so the inline check is
-# the union of the two. Code that spreads a command beyond both, or over
+# takes the next word as its value. These windows are bounded, but this
+# strict walk is not the whole check: interp() also asks when the wide
+# reading, wmentions(), or the denied-pair reading, comention(), finds a
+# gated command, so the inline check is the union of the three. Code that
+# spreads a command beyond all three, or over
 # several lines (a force flag on the line after push), is out of reach, as
 # code that builds the command from pieces is. Shell text is not read this
 # way: it goes through mentions().
 function imentions(t,   n, i, j, k, x, y, np, pw, q, lim, gv) {
-    if (gmentions(t) || gmentions(loosen(t)) || comention(loosen(t))) return 1
+    if (gmentions(t) || gmentions(loosen(t))) return 1
     n = iwords(t)
     np = split("pr merge repo delete auth switch release create issue close", pw, " ")
     for (i = 1; i <= n; i++) {
@@ -697,33 +698,37 @@ function imentions(t,   n, i, j, k, x, y, np, pw, q, lim, gv) {
     return 0
 }
 
-# The deny pairs failing closed: the words of u (code with its punctuation set
-# aside, a path before a word dropped) name gh, pr and merge, or niwa and
-# reap, anywhere, in any order. A loop or a later statement can name the
-# subcommand before the call, which neither ordered reading sees. Only the
-# two denied pairs are read this way.
+# The denied pairs failing closed: the words of u (code with its punctuation
+# set aside, a path before a word dropped) name gh, pr and merge, gh, repo
+# and delete, or niwa and reap, anywhere, in any order. A loop or a later
+# statement can name the subcommand before the call, which neither ordered
+# reading (the strict walk in imentions(), the wide one in wmentions())
+# sees. Only the denied pairs (merge, repo delete, reap) are read this way;
+# the asked ones are not.
 function comention(u,   w, n, i, x, s) {
     n = split(u, w, /[ \t\n]+/)
     for (i = 1; i <= n; i++) { x = w[i]; sub(/.*\//, "", x); s[x] = 1 }
-    return (("gh" in s) && ("pr" in s) && ("merge" in s)) || (("niwa" in s) && ("reap" in s))
+    return (("gh" in s) && ("pr" in s) && ("merge" in s)) ||
+           (("gh" in s) && ("repo" in s) && ("delete" in s)) ||
+           (("niwa" in s) && ("reap" in s))
 }
 
-# The wider reading of inline code the hook used before the strict walk in
-# imentions(), kept beside it unchanged so the inline check never allows what
-# this reading asked on. wmentions() asks when the code, as it is or with its
+# The wide reading of inline code, the one the hook used before the strict
+# walk in imentions(), kept beside it unchanged so the inline check never
+# allows what this reading asked on. wmentions() asks when the code, as it is or with its
 # punctuation set aside, holds a gated command as mentions() reads one; when
 # git comes before push with any words but a statement separator between
 # them and a force flag or a plus sign follows push on that line (gitpush(),
 # read once on the code as it is and once with only the separators kept);
 # or when, among the words of the code with its punctuation set aside, gh is
 # followed within twelve words by one of its gated subcommand pairs in order,
-# or niwa by reap (spaced() and near(), which gives the position of the
-# first word x among w[i + 1 .. lim], or 0). Order is all spaced() looks at,
-# so a gh or niwa call whose subcommand words sit in a dict, a split string,
-# a joined list, a comprehension or a later extend counts here though the
-# strict walk does not step over them. The strict walk adds shapes this
-# reading misses: a long run of git options, a git name assigned earlier, an
-# options object, a gh workflow run selector.
+# or niwa by reap (spaced()). Order is all spaced() looks at, so a gh or
+# niwa call whose subcommand words sit in a dict, a split string, a joined
+# list, a comprehension or a later extend counts here though the strict walk
+# does not step over them. The strict walk adds shapes this reading misses:
+# a long run of git options, a git name assigned earlier, an options object,
+# a gh workflow run selector. The denied-pair reading, comention(), adds the
+# denied subcommands named before their call.
 #
 # Ordinary code this reading asks on is accepted: a safe gh or niwa call
 # followed by a printed merge or reap word, or printed text holding git,
@@ -753,6 +758,7 @@ function spaced(u,   w, n, i, p, q, np, pw, lim) {
     return 0
 }
 
+# The position of the first word x among w[i + 1 .. lim], or 0.
 function near(w, lim, i, x,   j) {
     for (j = i + 1; j <= lim; j++) if (w[j] == x) return j
     return 0
@@ -878,7 +884,8 @@ function gitsub(x) {
 
 # Whether x is a git global option whose value is the next word. The push
 # rule and the inline-code check both read the git options through this one
-# list.
+# list; the second pass of the push rule reads it with --attr-source set
+# aside.
 function gitvalue(x) {
     return x ~ /^(-C|-c|--git-dir|--work-tree|--namespace|--exec-path|--super-prefix|--config-env|--attr-source)$/
 }
@@ -1150,9 +1157,11 @@ function rules(s, h, a, m,   x, k, meth, t, n, w, wd, merge, ep, writes, lx, r, 
         return 0
     }
     if (h == "git") {
-        # Two passes over the options, asking if either finds a force push: the
-        # second reads the word after --attr-source as an argument, as the hook
-        # did before that option joined the gitvalue() list.
+        # Two passes over the options, asking if either finds a force push.
+        # Real git takes a value after --attr-source, which the first pass
+        # reads; the second reads the word after it as the subcommand, as the
+        # hook did before that option joined the gitvalue() list. It over-asks
+        # on purpose, so a line the earlier reading caught stays caught.
         for (pass = 0; pass < 2; pass++) {
             for (k = a; k <= m; k++) {
                 x = segw[s, k]
@@ -1261,7 +1270,9 @@ function interp(s, h, a, m,   f, k, x, t, inl, pos, fileprog) {
         if (pos) return 0
         t = (body[s] != "") ? body[s] : src
     }
-    if (imentions(t) || wmentions(t)) {
+    # Three readings side by side, any one of which asks: the strict walk,
+    # the wide reading, and the denied pairs named in any order.
+    if (imentions(t) || wmentions(t) || comention(loosen(t))) {
         rd = "ask"; rr = "inline code handed to " h " mentions a gated command"; return 1
     }
     return 0

@@ -686,14 +686,18 @@ row ask   "python3 -c 'import subprocess; a = [\"gh\", \"release\"]; a.extend([\
 row ask   "python3 -c 'import subprocess; a = [\"gh\", \"pr\"]; a.extend([\"merge\", \"5\"]); subprocess.run(a)'"
 row ask   "python3 -c 'import os; note = \"git \$o push --force\"; os.system(build())'"
 row ask   "node -e 'const s = \`git \${opt} push -f\`; run(s)'"
-# The push rule reads the git options a second time with the word after
-# --attr-source as an argument, as it did before that option was listed.
+# Real git takes a value after --attr-source, which the push rule reads; a
+# second pass reads the word after it as the subcommand, as the hook did
+# before that option was listed. It over-asks on purpose, so a line the
+# earlier reading caught stays caught.
 row ask   'git --attr-source push origin --force'
 row ask   'git --attr-source push origin +main'
 row allow 'git --attr-source HEAD push origin main'
 # A loop over a word list that names the denied subcommand before the call,
-# for gh and for niwa: the deny pairs named in any order count.
+# for a gh pr call, a gh repo call and niwa: the denied pairs named in any
+# order count.
 row ask   "node -e 'for (const v of [\"view\", \"merge\"]) require(\"child_process\").execFileSync(\"gh\", [\"pr\", v, \"8\"])'"
+row ask   "node -e 'for (const v of [\"view\", \"delete\"]) require(\"child_process\").execFileSync(\"gh\", [\"repo\", v, \"o/r\"])'"
 row ask   "ruby -e '%w[list reap].each { |s| system(\"niwa\", s) }'"
 # Everyday lines that ask now, and the bar requires it: the wider reading
 # asked on them, so allowing them would allow what it asked on. A safe niwa
