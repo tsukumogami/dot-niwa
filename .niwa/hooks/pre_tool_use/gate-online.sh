@@ -67,15 +67,23 @@
 #     node -e, osascript -e, php -r, lua -e, deno eval, and the code an
 #     interpreter reads from a heredoc, here-string or pipe when it is given
 #     no script) that mentions a gated command, read with its quotes and
-#     punctuation set aside, so a call written as a list of strings counts,
-#     even with an options object, or flags and their values (one written
-#     as interpolation or quoted with blanks too), between program and
-#     subcommand; a force push there needs git (or a name git was assigned
-#     to) followed by push with only git options, or a spread list of them,
-#     between them, and anything else there reads as ordinary code; a gh
-#     workflow run there asks unless its selector is a literal .yml or
-#     .yaml name; an awk program counts when it also runs a command
-#     (system, getline or a pipe);
+#     punctuation set aside, so a call written as a list of strings counts.
+#     Two readings are joined and either one asks. The strict one walks
+#     from program to subcommand past an options object, or flags and their
+#     values (one written as interpolation or quoted with blanks too), and
+#     takes a force push as git (or a name git was assigned to) followed by
+#     push with only git options, or a spread list of them, between them; a
+#     gh workflow run there asks unless its selector is a literal .yml or
+#     .yaml name. The wide one, the reading the hook used before the strict
+#     walk, takes gh followed within a few words by a gated subcommand pair,
+#     or niwa by reap, whatever lies between, and git before push on one
+#     statement with a force flag or plus sign after it. The two denied
+#     pairs also count named anywhere in the code in any order. The union
+#     asks on some ordinary code (a safe gh or niwa call followed by a
+#     printed merge or reap word; printed text holding git, push and a plus
+#     sign), and that is accepted: an ordinary line the wide reading asks on
+#     can carry a denied call the scanner can't read. An awk program counts
+#     when it also runs a command (system, getline or a pipe);
 #   - a command name that is itself an expansion ($GH pr merge);
 #   - a command name that is a glob pattern which could be several gated
 #     commands, or a wrapper running text that mentions one;
@@ -608,17 +616,20 @@ function gmentions(t) {
 }
 
 # Code with its quotes and punctuation turned into blanks, so a call written
-# as a list of strings reads as the command it names.
-function loosen(t) {
-    gsub(/[^A-Za-z0-9_.\/+=\n-]/, " ", t)
+# as a list of strings reads as the command it names. With keep, the
+# statement separators ; & and | stay.
+function loosen(t, keep) {
+    if (keep) gsub(/[^A-Za-z0-9_.\/+=\n;&|-]/, " ", t)
+    else gsub(/[^A-Za-z0-9_.\/+=\n-]/, " ", t)
     return t
 }
 
 # Whether inline interpreter code t mentions a gated command. First the
 # patterns mentions() uses, on the code as it is and with its punctuation set
-# aside. Then four shapes over the words of the code (split at blanks,
-# quotes, brackets, parentheses and commas, so a quoted option value holding
-# ; & or | stays one word):
+# aside, and the deny pairs named in any order (comention()). Then four
+# shapes over the words of the code (split at blanks, quotes, brackets,
+# parentheses and commas, so a quoted option value holding ; & or | stays
+# one word):
 #   - git (or a name git was assigned to earlier in the code), then push
 #     with only git options between them: flags, a spread or splat of a
 #     list (...opts, *opts), a string prefix such as f or rb before a flag,
@@ -647,15 +658,15 @@ function loosen(t) {
 # or -> in code is no flag; between gh pair words, or between niwa and reap,
 # a -- counts only after a flag (alone it asked on ordinary text such as
 # "release --" before "create"). A flag ending = (--git-dir=)
-# takes the next word as its value. The windows are bounded on purpose: wider or
-# unordered readings asked on ordinary code (a gh pr list followed by a
-# variable named merge, a git rev-list followed by an array push). Code that
-# spreads a command across a data structure beyond these shapes, or over
+# takes the next word as its value. These windows are bounded, but they are
+# not the whole check: interp() asks when either this walk or the wider
+# reading below, wmentions(), finds a gated command, so the inline check is
+# the union of the two. Code that spreads a command beyond both, or over
 # several lines (a force flag on the line after push), is out of reach, as
 # code that builds the command from pieces is. Shell text is not read this
 # way: it goes through mentions().
 function imentions(t,   n, i, j, k, x, y, np, pw, q, lim, gv) {
-    if (gmentions(t) || gmentions(loosen(t))) return 1
+    if (gmentions(t) || gmentions(loosen(t)) || comention(loosen(t))) return 1
     n = iwords(t)
     np = split("pr merge repo delete auth switch release create issue close", pw, " ")
     for (i = 1; i <= n; i++) {
@@ -683,6 +694,67 @@ function imentions(t,   n, i, j, k, x, y, np, pw, q, lim, gv) {
             }
         }
     }
+    return 0
+}
+
+# The deny pairs failing closed: the words of u (code with its punctuation set
+# aside, a path before a word dropped) name gh, pr and merge, or niwa and
+# reap, anywhere, in any order. A loop or a later statement can name the
+# subcommand before the call, which neither ordered reading sees. Only the
+# two denied pairs are read this way.
+function comention(u,   w, n, i, x, s) {
+    n = split(u, w, /[ \t\n]+/)
+    for (i = 1; i <= n; i++) { x = w[i]; sub(/.*\//, "", x); s[x] = 1 }
+    return (("gh" in s) && ("pr" in s) && ("merge" in s)) || (("niwa" in s) && ("reap" in s))
+}
+
+# The wider reading of inline code the hook used before the strict walk in
+# imentions(), kept beside it unchanged so the inline check never allows what
+# this reading asked on. wmentions() asks when the code, as it is or with its
+# punctuation set aside, holds a gated command as mentions() reads one; when
+# git comes before push with any words but a statement separator between
+# them and a force flag or a plus sign follows push on that line (gitpush(),
+# read once on the code as it is and once with only the separators kept);
+# or when, among the words of the code with its punctuation set aside, gh is
+# followed within twelve words by one of its gated subcommand pairs in order,
+# or niwa by reap (spaced() and near(), which gives the position of the
+# first word x among w[i + 1 .. lim], or 0). Order is all spaced() looks at,
+# so a gh or niwa call whose subcommand words sit in a dict, a split string,
+# a joined list, a comprehension or a later extend counts here though the
+# strict walk does not step over them. The strict walk adds shapes this
+# reading misses: a long run of git options, a git name assigned earlier, an
+# options object, a gh workflow run selector.
+#
+# Ordinary code this reading asks on is accepted: a safe gh or niwa call
+# followed by a printed merge or reap word, or printed text holding git,
+# push and a plus sign. Such a line can carry a denied call the scanner
+# cannot read (built from character codes, say) beside the words this
+# reading finds, and allowing it would let that call through.
+function wmentions(t,   u) {
+    u = loosen(t)
+    return gmentions(t) || gmentions(u) || gitpush(t) || gitpush(loosen(t, 1)) || spaced(u)
+}
+
+function gitpush(t) {
+    return t ~ /(^|[^A-Za-z0-9_.-])git[ \t\n]+([^ \t\n;&|]+[ \t\n]+)*push[ \t]([^\n;&|]*[ \t])?(--force|-[A-Za-z]*f[A-Za-z]*([ \t\n;&|]|$)|\+)/
+}
+
+function spaced(u,   w, n, i, p, q, np, pw, lim) {
+    n = split(u, w, /[ \t\n]+/)
+    np = split("pr merge repo delete auth switch release create issue close", pw, " ")
+    for (i = 1; i <= n; i++) {
+        lim = i + 12
+        if (lim > n) lim = n
+        if (w[i] == "niwa" && near(w, lim, i, "reap")) return 1
+        if (w[i] != "gh") continue
+        for (q = 1; q < np; q += 2)
+            if ((p = near(w, lim, i, pw[q])) && near(w, lim, p, pw[q + 1])) return 1
+    }
+    return 0
+}
+
+function near(w, lim, i, x,   j) {
+    for (j = i + 1; j <= lim; j++) if (w[j] == x) return j
     return 0
 }
 
@@ -985,7 +1057,7 @@ function dispatch(w, dyn) {
 # Rules for command head h whose arguments are segw[s, a..m].
 # Sets rd, rr and ra (the authority a grant would need, or ""), and rrelease
 # for a release workflow dispatch; returns 1 on a match.
-function rules(s, h, a, m,   x, k, meth, t, n, w, wd, merge, ep, writes, lx, r, mp, pat) {
+function rules(s, h, a, m,   x, k, meth, t, n, w, wd, merge, ep, writes, lx, r, mp, pat, pass) {
     rd = ""; rr = ""; ra = ""; rrelease = 0
     if (h ~ /^(curl|wget|nc|ncat|netcat)$/) { rd = "deny"; rr = h; return 1 }
     if (h == "gh") {
@@ -1078,27 +1150,32 @@ function rules(s, h, a, m,   x, k, meth, t, n, w, wd, merge, ep, writes, lx, r, 
         return 0
     }
     if (h == "git") {
-        for (k = a; k <= m; k++) {
-            x = segw[s, k]
-            if (gitvalue(x)) k++
-            else if (x !~ /^-/) break
-        }
-        if (k > m || !(r = kw(s, k, "push"))) return 0
-        for (k++; k <= m; k++) {
-            x = segw[s, k]
-            if (x ~ /^--force/ || x ~ /^-[A-Za-z]*f[A-Za-z]*$/ || x ~ /^\+/) {
-                if (r == 2) guessed = 1
-                rd = "ask"; rr = "git push --force"; return 1
+        # Two passes over the options, asking if either finds a force push: the
+        # second reads the word after --attr-source as an argument, as the hook
+        # did before that option joined the gitvalue() list.
+        for (pass = 0; pass < 2; pass++) {
+            for (k = a; k <= m; k++) {
+                x = segw[s, k]
+                if (gitvalue(x) && (pass == 0 || x != "--attr-source")) k++
+                else if (x !~ /^-/) break
             }
-            # A pattern that could be a force flag or a +refspec, or starts
-            # with a glob (so could be any name on disk). A word filled in at
-            # run time (by xargs or find) does not count, as a $VAR word
-            # does not: only a force the line spells out asks.
-            if (isglob(s, k) && (substr(segm[s, k], 1, 1) == "a" && x ~ /^[*?[(^#]/ ||
-                x ~ /^-[^-]/ || "-f" ~ gre(x, segm[s, k]) || "--force" ~ gre(x, segm[s, k]) ||
-                "--force-with-lease" ~ gre(x, segm[s, k]))) {
-                guessed = 1
-                rd = "ask"; rr = "git push --force"; return 1
+            if (k > m || !(r = kw(s, k, "push"))) continue
+            for (k++; k <= m; k++) {
+                x = segw[s, k]
+                if (x ~ /^--force/ || x ~ /^-[A-Za-z]*f[A-Za-z]*$/ || x ~ /^\+/) {
+                    if (r == 2) guessed = 1
+                    rd = "ask"; rr = "git push --force"; return 1
+                }
+                # A pattern that could be a force flag or a +refspec, or
+                # starts with a glob (so could be any name on disk). A word
+                # filled in at run time (by xargs or find) does not count, as
+                # a $VAR word does not: only a force the line spells out asks.
+                if (isglob(s, k) && (substr(segm[s, k], 1, 1) == "a" && x ~ /^[*?[(^#]/ ||
+                    x ~ /^-[^-]/ || "-f" ~ gre(x, segm[s, k]) || "--force" ~ gre(x, segm[s, k]) ||
+                    "--force-with-lease" ~ gre(x, segm[s, k]))) {
+                    guessed = 1
+                    rd = "ask"; rr = "git push --force"; return 1
+                }
             }
         }
         return 0
@@ -1184,7 +1261,7 @@ function interp(s, h, a, m,   f, k, x, t, inl, pos, fileprog) {
         if (pos) return 0
         t = (body[s] != "") ? body[s] : src
     }
-    if (imentions(t)) {
+    if (imentions(t) || wmentions(t)) {
         rd = "ask"; rr = "inline code handed to " h " mentions a gated command"; return 1
     }
     return 0

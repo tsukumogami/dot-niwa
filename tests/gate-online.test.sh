@@ -619,14 +619,15 @@ row ask   "node -e 'require(\"child_process\").execFileSync(\"git\", [\"push\", 
 # reap.
 row ask   "python3 -c 'import subprocess; o, r = \"a\", \"b\"; subprocess.run([\"gh\", \"pr\", \"-R\", f\"{o}/{r}\", \"merge\", \"1\"])'"
 row ask   "deno eval 'const d = \"w\"; new Deno.Command(\"niwa\", {args: [\"-C\", \`\${d}/x\`, \"reap\"]}).outputSync()'"
-# Ordinary code: a word that is not a git option between git and push, a
-# -file, -format or -fPIC word on the line of a plain push, and a -> or --
-# between gh pair words are no gated call.
+# Ordinary code: a word that is not a git option between git and push, and a
+# -file, -format or -fPIC word on the line of a plain push, are no gated call.
 row allow "python3 -c 'from git import Repo; git = Repo(\".\"); jobs = {\"push\": \"-f\"}; print(jobs)'"
 row allow "python3 -c 'import subprocess; subprocess.run([\"git\", \"push\", \"origin\", \"main\"]); subprocess.run([\"cc\", \"-fPIC\", \"-c\", \"x.c\"])'"
 row allow "node -e 'require(\"child_process\").execSync(\"git push origin main\"); console.log(\"-file\", \"-format\")'"
-row allow "python3 -c 'print(\"gh pr -> merge queue\")'"
-row allow "python3 -c 'print(\"gh issue -- close it later\")'"
+# A -> or -- between gh pair words is no flag to the strict walk, but the
+# wider reading finds the pair in order and asks, and the bar requires it.
+row ask   "python3 -c 'print(\"gh pr -> merge queue\")'"
+row ask   "python3 -c 'print(\"gh issue -- close it later\")'"
 # Between git and push: a spread or splat of a list of options, git held in
 # a variable, a string prefix before a flag, a quoted value holding blanks or
 # a subcommand name, an options object whose value names a subcommand, and
@@ -640,10 +641,11 @@ row ask   "python3 -c 'import os; os.system(\"git -C \\\"/tmp/my log\\\" push -f
 row ask   "deno eval 'new Deno.Command(\"git\", {cwd: \"config\", args: [\"push\", \"-f\", \"origin\", \"x\"]}).outputSync()'"
 row ask   "python3 -c 'import subprocess; subprocess.run([\"git\", \"--attr-source\", \"log\", \"push\", \"-f\"])'"
 row allow "python3 -c 'import subprocess; subprocess.run([\"gh\", \"workflow\", \"run\", \"--ref\", \"main\", \"ci.yml\"])'"
-# A -- after a flag between gh pair words still reaches the second word; a
-# -- right after the first word is text.
+# A -- after a flag between gh pair words still reaches the second word. A
+# -- right after the first word is text to the strict walk, but a safe gh
+# call followed by the printed pair words asks under the wider reading.
 row ask   "python3 -c 'import subprocess; subprocess.run([\"gh\", \"release\", \"-R\", \"o/r\", \"--\", \"create\", \"v1\"])'"
-row allow "python3 -c 'import subprocess; subprocess.run([\"gh\", \"release\", \"view\", \"--json\", \"tagName\"]); print(\"release --\", \"create notes by hand\")'"
+row ask   "python3 -c 'import subprocess; subprocess.run([\"gh\", \"release\", \"view\", \"--json\", \"tagName\"]); print(\"release --\", \"create notes by hand\")'"
 # Ordinary code these readings could reach: git assigned to a name that is
 # then used as data, a quoted option value before another subcommand, and an
 # args key in a later statement than the git call.
@@ -651,20 +653,53 @@ row allow "python3 -c 'import subprocess; exe = \"git\"; jobs = []; jobs.append(
 row allow "python3 -c 'import subprocess; subprocess.run([\"git\", \"-c\", \"core.pager=cat\", \"log\", \"-1\"]); print(\"push\", \"-f\")'"
 row allow "python3 -c 'import os; os.system(\"git -C \\\"my repo\\\" log -1\"); print(\"push\", \"-f\")'"
 row allow "deno eval 'const c = new Deno.Command(\"git\", {cwd: \"repo\"}); const opts = {args: [\"push\", \"-f\"]}; console.log(c, opts)'"
-# The words gh, pr and merge far apart in unrelated strings.
-row allow "python3 -c 'print(\"gh\"); print(\"one two three four five six seven eight nine ten eleven twelve\"); print(\"thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty more words\"); print(\"pr\", \"merge\")'"
-# A gh, niwa or git call that is not the gated one, with a gated word later
-# in the code: the pair has to be adjacent, and only git options may sit
-# between git and push.
-row allow "python3 -c 'import subprocess; out = subprocess.run([\"gh\", \"pr\", \"list\"], capture_output=True).stdout; merge = out.strip(); print(merge)'"
-row allow "python3 -c 'import subprocess; subprocess.run([\"gh\", \"issue\", \"list\"]); close = [1, 2]; print(close)'"
-row allow "ruby -e 'system(\"gh\", \"release\", \"list\"); create = true; puts create'"
-row allow $'python3 <<\'EOF\'\nimport subprocess\nsubprocess.run(["niwa", "list"])\n# nothing here to reap yet\nEOF'
+# The words gh, pr and merge far apart in unrelated strings: a deny pair
+# named anywhere in the code asks.
+row ask   "python3 -c 'print(\"gh\"); print(\"one two three four five six seven eight nine ten eleven twelve\"); print(\"thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty more words\"); print(\"pr\", \"merge\")'"
+# A gh or niwa call that is not the gated one, with a gated word later in
+# the code: the wider reading finds the pair in order and asks, and the bar
+# requires it.
+row ask   "python3 -c 'import subprocess; out = subprocess.run([\"gh\", \"pr\", \"list\"], capture_output=True).stdout; merge = out.strip(); print(merge)'"
+row ask   "python3 -c 'import subprocess; subprocess.run([\"gh\", \"issue\", \"list\"]); close = [1, 2]; print(close)'"
+row ask   "ruby -e 'system(\"gh\", \"release\", \"list\"); create = true; puts create'"
+row ask   $'python3 <<\'EOF\'\nimport subprocess\nsubprocess.run(["niwa", "list"])\n# nothing here to reap yet\nEOF'
+# A git call that is not a push, or no git call, with a push word later in
+# the code (an array push, a printed push, a push key in data): only git
+# options may sit between git and push, and a statement separator ends the
+# wider reading's run, so these stay allowed.
 row allow "node -e 'const r = require(\"child_process\").execSync(\"git rev-list --count HEAD\"); const a = []; a.push(Number(r) + 1); console.log(a)'"
 row allow "node -e 'const b = require(\"child_process\").execSync(\"git branch --show-current\"); const q = []; q.push(\"+\" + b, \"-f\")'"
 row allow "python3 -c 'import subprocess; subprocess.run([\"git\", \"status\"]); print(\"push\", \"-f\")'"
 row allow "python3 -c 'stats = {}; stats[\"push\"] = stats.get(\"push\", 0) + 1; print(stats)'"
 row allow "perl -e 'my %stats; \$stats{push} += 1; print \$stats{push}'"
+
+# The wider reading kept beside the strict walk: gh or niwa with its gated
+# subcommand words reached through pieces the walk doesn't step over (dict
+# lookups, a split string, a joined list, a comprehension, a later extend),
+# and a git force-push string beside other code.
+row ask   "python3 -c 'import subprocess; o = {\"a\": \"gh\", \"b\": \"release\", \"c\": \"create\"}; subprocess.run([o[\"a\"], o[\"b\"], o[\"c\"], \"v9\"])'"
+row ask   "python3 -c 'import subprocess; o = {\"a\": \"gh\", \"b\": \"pr\", \"c\": \"merge\"}; subprocess.run([o[\"a\"], o[\"b\"], \"-R\", \"o/r\", o[\"c\"], \"12\"])'"
+row ask   "python3 -c 'import subprocess; subprocess.call(\"gh|issue|--repo|o/r|close|5\".split(\"|\"))'"
+row ask   "python3 -c 'import os; os.system(\" \".join([\"gh\", \"auth\", \"--hostname\", \"h.example\", \"switch\"]))'"
+row ask   "python3 -c 'import subprocess; subprocess.run([p for p in (\"gh\", \"x\", \"issue\", \"y\", \"close\", \"3\") if p not in \"xy\"])'"
+row ask   "python3 -c 'import subprocess; a = [\"gh\", \"release\"]; a.extend([\"create\", \"v2\"]); subprocess.run(a)'"
+row ask   "python3 -c 'import subprocess; a = [\"gh\", \"pr\"]; a.extend([\"merge\", \"5\"]); subprocess.run(a)'"
+row ask   "python3 -c 'import os; note = \"git \$o push --force\"; os.system(build())'"
+row ask   "node -e 'const s = \`git \${opt} push -f\`; run(s)'"
+# The push rule reads the git options a second time with the word after
+# --attr-source as an argument, as it did before that option was listed.
+row ask   'git --attr-source push origin --force'
+row ask   'git --attr-source push origin +main'
+row allow 'git --attr-source HEAD push origin main'
+# A loop over a word list that names the denied subcommand before the call,
+# for gh and for niwa: the deny pairs named in any order count.
+row ask   "node -e 'for (const v of [\"view\", \"merge\"]) require(\"child_process\").execFileSync(\"gh\", [\"pr\", v, \"8\"])'"
+row ask   "ruby -e '%w[list reap].each { |s| system(\"niwa\", s) }'"
+# Everyday lines that ask now, and the bar requires it: the wider reading
+# asked on them, so allowing them would allow what it asked on. A safe niwa
+# call then a printed reap word; printed text holding git, push and a plus.
+row ask   "python3 -c 'import subprocess; subprocess.run([\"niwa\", \"list\"]); print(\"nothing to reap\")'"
+row ask   "python3 -c 'print(\"run git then push the + branch\")'"
 
 # Wrapper options read as getopt reads them: a cluster whose last letter
 # takes a value, or a long option that takes one without =, takes the next
