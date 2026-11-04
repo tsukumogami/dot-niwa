@@ -625,7 +625,8 @@ row allow "python3 -c 'from git import Repo; git = Repo(\".\"); jobs = {\"push\"
 row allow "python3 -c 'import subprocess; subprocess.run([\"git\", \"push\", \"origin\", \"main\"]); subprocess.run([\"cc\", \"-fPIC\", \"-c\", \"x.c\"])'"
 row allow "node -e 'require(\"child_process\").execSync(\"git push origin main\"); console.log(\"-file\", \"-format\")'"
 # A -> or -- between gh pair words is no flag to the strict walk, but the
-# wider reading finds the pair in order and asks, and the bar requires it.
+# wide reading finds the pair in order and asks, failing closed as issue
+# #64 asks where the hook can't normalize the command.
 row ask   "python3 -c 'print(\"gh pr -> merge queue\")'"
 row ask   "python3 -c 'print(\"gh issue -- close it later\")'"
 # Between git and push: a spread or splat of a list of options, git held in
@@ -657,8 +658,8 @@ row allow "deno eval 'const c = new Deno.Command(\"git\", {cwd: \"repo\"}); cons
 # named anywhere in the code asks.
 row ask   "python3 -c 'print(\"gh\"); print(\"one two three four five six seven eight nine ten eleven twelve\"); print(\"thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty more words\"); print(\"pr\", \"merge\")'"
 # A gh or niwa call that is not the gated one, with a gated word later in
-# the code: the wider reading finds the pair in order and asks, and the bar
-# requires it.
+# the code: the wide reading finds the pair in order and asks, failing
+# closed as issue #64 asks where the hook can't normalize the command.
 row ask   "python3 -c 'import subprocess; out = subprocess.run([\"gh\", \"pr\", \"list\"], capture_output=True).stdout; merge = out.strip(); print(merge)'"
 row ask   "python3 -c 'import subprocess; subprocess.run([\"gh\", \"issue\", \"list\"]); close = [1, 2]; print(close)'"
 row ask   "ruby -e 'system(\"gh\", \"release\", \"list\"); create = true; puts create'"
@@ -699,9 +700,10 @@ row allow 'git --attr-source HEAD push origin main'
 row ask   "node -e 'for (const v of [\"view\", \"merge\"]) require(\"child_process\").execFileSync(\"gh\", [\"pr\", v, \"8\"])'"
 row ask   "node -e 'for (const v of [\"view\", \"delete\"]) require(\"child_process\").execFileSync(\"gh\", [\"repo\", v, \"o/r\"])'"
 row ask   "ruby -e '%w[list reap].each { |s| system(\"niwa\", s) }'"
-# Everyday lines that ask now, and the bar requires it: the wider reading
-# asked on them, so allowing them would allow what it asked on. A safe niwa
-# call then a printed reap word; printed text holding git, push and a plus.
+# Everyday lines that ask now, failing closed as issue #64 asks: the wide
+# reading asked on them, so allowing them would allow what it asked on. A
+# safe niwa call then a printed reap word; printed text holding git, push
+# and a plus.
 row ask   "python3 -c 'import subprocess; subprocess.run([\"niwa\", \"list\"]); print(\"nothing to reap\")'"
 row ask   "python3 -c 'print(\"run git then push the + branch\")'"
 

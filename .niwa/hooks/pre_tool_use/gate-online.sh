@@ -78,8 +78,8 @@
 #     walk, takes gh followed within a few words by a gated subcommand pair,
 #     or niwa by reap, whatever lies between, and git before push on one
 #     statement with a force flag or plus sign after it. The denied-pair
-#     reading takes the words of a denied command (pr merge, repo delete,
-#     niwa reap) named anywhere in the code in any order. The union
+#     reading takes the words of a denied command (gh pr merge, gh repo
+#     delete, niwa reap) named anywhere in the code in any order. The union
 #     asks on some ordinary code (a safe gh or niwa call followed by a
 #     printed merge or reap word; printed text holding git, push and a plus
 #     sign), and that is accepted: an ordinary line the wide reading asks on
@@ -662,8 +662,8 @@ function loosen(t, keep) {
 # strict walk is not the whole check: interp() also asks when the wide
 # reading, wmentions(), or the denied-pair reading, comention(), finds a
 # gated command, so the inline check is the union of the three. Code that
-# spreads a command beyond all three, or over
-# several lines (a force flag on the line after push), is out of reach, as
+# spreads a command beyond all three, or over several lines (a force flag on
+# the line after push), is out of reach, as
 # code that builds the command from pieces is. Shell text is not read this
 # way: it goes through mentions().
 function imentions(t,   n, i, j, k, x, y, np, pw, q, lim, gv) {
@@ -703,7 +703,8 @@ function imentions(t,   n, i, j, k, x, y, np, pw, q, lim, gv) {
 # and delete, or niwa and reap, anywhere, in any order. A loop or a later
 # statement can name the subcommand before the call, which neither ordered
 # reading (the strict walk in imentions(), the wide one in wmentions())
-# sees. Only the denied pairs (merge, repo delete, reap) are read this way;
+# sees. Only the denied pairs (gh pr merge, gh repo delete, niwa reap) are
+# read this way;
 # the asked ones are not.
 function comention(u,   w, n, i, x, s) {
     n = split(u, w, /[ \t\n]+/)
@@ -715,10 +716,10 @@ function comention(u,   w, n, i, x, s) {
 
 # The wide reading of inline code, the one the hook used before the strict
 # walk in imentions(), kept beside it unchanged so the inline check never
-# allows what this reading asked on. wmentions() asks when the code, as it is or with its
-# punctuation set aside, holds a gated command as mentions() reads one; when
-# git comes before push with any words but a statement separator between
-# them and a force flag or a plus sign follows push on that line (gitpush(),
+# allows what this reading asked on. wmentions() asks when the code, as it
+# is or with its punctuation set aside, holds a gated command as mentions()
+# reads one; when git comes before push with any words but a statement
+# separator between them and a force flag or a plus sign follows push on that line (gitpush(),
 # read once on the code as it is and once with only the separators kept);
 # or when, among the words of the code with its punctuation set aside, gh is
 # followed within twelve words by one of its gated subcommand pairs in order,
@@ -1159,9 +1160,10 @@ function rules(s, h, a, m,   x, k, meth, t, n, w, wd, merge, ep, writes, lx, r, 
     if (h == "git") {
         # Two passes over the options, asking if either finds a force push.
         # Real git takes a value after --attr-source, which the first pass
-        # reads; the second reads the word after it as the subcommand, as the
-        # hook did before that option joined the gitvalue() list. It over-asks
-        # on purpose, so a line the earlier reading caught stays caught.
+        # skips as the value of that option; the second reads the word after
+        # it as the subcommand, as the hook did before that option joined
+        # the gitvalue() list. It over-asks on purpose, so a line the
+        # earlier reading caught stays caught.
         for (pass = 0; pass < 2; pass++) {
             for (k = a; k <= m; k++) {
                 x = segw[s, k]
@@ -1271,7 +1273,7 @@ function interp(s, h, a, m,   f, k, x, t, inl, pos, fileprog) {
         t = (body[s] != "") ? body[s] : src
     }
     # Three readings side by side, any one of which asks: the strict walk,
-    # the wide reading, and the denied pairs named in any order.
+    # the wide reading, and the denied-pair reading.
     if (imentions(t) || wmentions(t) || comention(loosen(t))) {
         rd = "ask"; rr = "inline code handed to " h " mentions a gated command"; return 1
     }
