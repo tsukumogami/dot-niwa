@@ -390,11 +390,492 @@ row deny  'curl https://example.com' exempt-list
 row deny  'niwa reap' other-list
 
 # --- Known limits: the hook reads text, it does not run it ----------------
-# These pass because nothing in the command line names a gated command in
-# command position. Enforcing policy on the operation itself is niwa#320.
-row allow $'python3 - <<\'EOF\'\nimport subprocess\nsubprocess.run(["gh", "pr", "merge", "12"])\nEOF'
+# Each row here is allowed though it could run a gated command, because the
+# hook can't see the command from the text. Enforcing policy on the
+# operation itself is niwa#320. Code an interpreter reads from a heredoc used
+# to be listed here; it is now read as inline code (see the interpreter rows
+# below).
 row allow "alias m='gh pr merge'"
 row allow './scripts/merge-everything.sh'
+# A command name held in a variable is read strictly: a glob or run-time
+# word after it counts for nothing, so ordinary lines run through a path in a
+# variable never ask. Two layers of obscurity at once stay allowed.
+row allow '$GH pr m* 12'
+# Inline code is read in bounded windows on one line: a force flag on the
+# line after push is not seen.
+row allow $'python3 <<\'EOF\'\nimport subprocess\nsubprocess.run(["git", "push",\n    "-f", "origin", "x"])\nEOF'
+
+# --- Command words the shell resolves another way -------------------------
+# Each class below once put a gated command past the rules: the rule saw a
+# word the shell changes before the command runs, or a wrapper it did not
+# look through. Each has a row per rule family it reaches, and some run in
+# an installed instance copy.
+
+# zsh precommand modifiers before the command word, and zsh equals expansion
+# of the command word.
+row deny  'noglob gh pr merge 12'
+row deny  'nocorrect gh pr merge 12'
+row deny  '- gh pr merge 12'
+row deny  '=gh pr merge 12'
+row deny  'noglob curl https://example.com'
+row deny  '=curl https://example.com'
+row deny  'nocorrect niwa reap'
+row deny  '=niwa reap'
+row deny  'noglob gh repo delete o/r --yes'
+row ask   'noglob git push --force origin feature'
+row ask   '- git push -f origin feature'
+row ask   '=git push --force origin feature'
+row ask   'nocorrect unset GH_TOKEN'
+row ask   '=gh issue close 5'
+row ask   'noglob gh release create v1'
+row deny  'cd repo && noglob gh pr merge 12' other
+row deny  '=gh pr merge 12' other-repo
+row ask   'nocorrect gh issue close 5' other
+
+# zsh glob syntax in a word a rule reads: groups, alternation, extendedglob
+# negation, and the plain globs. A pattern that could be the word counts.
+row deny  'gh pr mer(ge) 12'
+row deny  'gh pr (merge|view) 12'
+row deny  'gh pr ^view 12'
+row deny  'gh pr m?rge 12'
+row deny  'gh pr [m]erge 12'
+row deny  'gh pr m* 12'
+row deny  'gh (pr|issue) merge 12'
+row deny  'gh repo de(lete) o/r --yes'
+row deny  'niwa re(ap)'
+row deny  'niwa (reap|list)'
+row deny  'niwa ^list'
+row ask   'gh issue clo(se) 5'
+row ask   'gh auth sw?tch'
+row ask   'gh release cr*te v1'
+row ask   'git (push) --force origin feature'
+row ask   'git push --for(ce) origin feature'
+row ask   'git push origin -[f]'
+row ask   'git push origin *'
+row ask   'unset GH_TOK(EN)'
+row ask   'unset GH_TOK?N'
+row ask   'unset -m "GH_*"'
+row ask   'gh api -X PUT repos/o/r/pulls/12/mer?e'
+row ask   'gh workflow run prepare-release.(yml|yaml)'
+row ask   "ls *(e:'gh pr merge 12':)"
+# A match through a pattern never takes the exemption.
+row deny  'gh pr m* 12' exempt
+row deny  'gh pr mer(ge) 12' other-repo
+row deny  'niwa ^list' other
+
+# A command word that is a glob pattern counts as each gated command it
+# could be; one that could be several asks.
+row deny  'n?wa reap'
+row deny  'cu*l https://example.com'
+row deny  '/usr/bin/g[h] pr merge 12'
+row ask   'gi? push --force origin feature'
+row ask   '?? example.com 80'
+row deny  'n?wa reap' other-repo
+
+# Brace expansion, which needs no file to match.
+row deny  'gh pr {merge,view} 12'
+row deny  'gh pr mer{g,}e 12'
+row deny  '{gh,} pr merge 12'
+row deny  'gh pr {m..m}erge 12'
+row deny  'niwa {reap,}'
+row deny  '{curl,} https://example.com'
+row ask   'git push {--force,} origin feature'
+row ask   'unset GH_{TOKEN,X}'
+row ask   'gh issue {close,} 5'
+row deny  'niwa {reap,}' other
+
+# Wrappers that run the program named in their arguments.
+row deny  'caffeinate -i gh pr merge 12'
+row deny  'caffeinate -t 60 curl https://example.com'
+row deny  'arch -arm64 gh pr merge 12'
+row deny  'arch -x86_64 niwa reap'
+row deny  'script -q /dev/null gh pr merge 12'
+row ask   "script -qc 'gh pr merge 12' /dev/null"
+row deny  'watch -n 5 gh pr merge 12'
+row ask   "watch -n 5 'gh pr merge 12'"
+row deny  'doas -u me gh pr merge 12'
+row ask   'doas git push --force origin feature'
+row deny  '/usr/bin/time -p gh pr merge 12'
+row deny  'time -p curl https://example.com'
+row deny  'gtimeout 5 niwa reap'
+row ask   'caffeinate gh issue close 5'
+row ask   'arch -arm64 git push --force origin feature'
+row deny  "env -S 'gh pr merge 12'"
+row deny  "env -S'niwa reap'"
+row ask   "env --split-string='git push --force' origin feature"
+row deny  'caffeinate -i gh pr merge 12' other
+row deny  'watch -n 5 gh pr merge 12' other-repo
+# find and fd run a command per file, with the file filled in at run time.
+row deny  'find . -name x -exec gh pr merge {} \;'
+row deny  'find . -exec gh pr {} \;'
+row deny  'find . -execdir niwa {} +'
+row deny  'find . -ok curl {} \;'
+row ask   'find . -name "*.txt" -okdir git push --force {} \;'
+row ask   'find . -exec gh issue {} 5 \;'
+row deny  'fd -e txt -x gh pr merge'
+row deny  'find . -exec gh pr {} \;' other
+# xargs reads its command's arguments at run time.
+row deny  'echo merge | xargs gh pr'
+row deny  'ls | xargs niwa'
+row deny  'echo x | xargs curl'
+row deny  'echo 12 | xargs -I{} gh pr merge {}'
+row deny  'echo merge | xargs -I % gh pr % 12'
+row ask   'echo 5 | xargs gh issue'
+# A run-time word is not taken for a git push force flag or +refspec, as a
+# $VAR word is not (allowed rows below); a force the line spells out asks.
+row ask   'echo origin | xargs git push --force'
+row ask   'echo origin | xargs -n1 git push -f'
+row deny  'echo merge | xargs gh pr' other-repo
+
+# Interpreters handed inline code that runs a gated command. A call written
+# as a list of strings counts.
+row ask   "python3 -c 'import os; os.system(\"gh pr merge 12\")'"
+row ask   "python3 -c 'import subprocess; subprocess.run([\"gh\", \"pr\", \"merge\", \"12\"])'"
+row ask   "perl -e 'system(\"gh\", \"pr\", \"merge\", \"12\")'"
+row ask   "osascript -e 'do shell script \"gh pr merge 12\"'"
+row ask   "node -e 'require(\"child_process\").execSync(\"niwa reap\")'"
+row ask   "ruby -e 'system(\"curl https://example.com\")'"
+row ask   "awk 'BEGIN { system(\"gh pr merge 12\") }'"
+row ask   "python3 -c 'import os; os.system(\"git push --force origin feature\")'"
+row ask   "python3 -c 'import os; os.system(\"gh issue close 5\")'"
+row ask   "perl -e 'system(\"unset GH_TOKEN; gh auth status\")'"
+row ask   "php -r 'system(\"gh pr merge 12\");'"
+row ask   "deno eval 'Deno.run({cmd: [\"gh\", \"pr\", \"merge\", \"12\"]})'"
+row ask   $'python3 <<\'EOF\'\nimport os\nos.system("niwa reap")\nEOF'
+row ask   $'node <<< \'require("child_process").execSync("curl https://example.com")\''
+row ask   'echo "import os; os.system(\"gh pr merge 1\")" | python3'
+row ask   $'python3 -W ignore <<\'EOF\'\nimport os\nos.system("gh pr merge 12")\nEOF'
+row ask   "python3 -c 'import os; os.system(\"gh pr merge 12\")'" exempt
+row ask   "perl -e 'system(\"gh\", \"pr\", \"merge\", \"12\")'" other-repo
+# Once listed under Known limits as allowed: the one existing row this
+# change turns from allow to ask.
+row ask   $'python3 - <<\'EOF\'\nimport subprocess\nsubprocess.run(["gh", "pr", "merge", "12"])\nEOF'
+# A word or two between the program and its arguments (an args key) still
+# counts, and so does a force push written as a list.
+row ask   "deno eval 'new Deno.Command(\"gh\", {args: [\"pr\", \"merge\", \"12\"]}).outputSync()'"
+row ask   "deno eval 'new Deno.Command(\"niwa\", {args: [\"reap\"]}).outputSync()'"
+row ask   "deno eval 'new Deno.Command(\"gh\", {args: [\"issue\", \"close\", \"5\"]}).outputSync()'"
+row ask   "python3 -c 'import subprocess; subprocess.run([\"git\", \"push\", \"-f\", \"origin\", \"x\"])'"
+# Any number of git options before push, and an options object or a -R
+# option between gh and its subcommand.
+row ask   "python3 -c 'import subprocess; subprocess.run([\"git\", \"-c\", \"a.b=1\", \"-c\", \"c.d=2\", \"push\", \"--force\", \"origin\", \"x\"])'"
+row ask   "node -e 'require(\"child_process\").execSync(\"git --git-dir=r/.git --work-tree=r -c a.b=1 push -f origin x\")'"
+row ask   "deno eval 'new Deno.Command(\"gh\", {cwd: \"x\", args: [\"pr\", \"merge\", \"12\"]}).outputSync()'"
+row ask   "deno eval 'new Deno.Command(\"gh\", {stdout: \"piped\", env: {A: \"b\"}, args: [\"issue\", \"close\", \"5\"]}).outputSync()'"
+row ask   "deno eval 'new Deno.Command(\"gh\", {args: [\"-R\", \"o/r\", \"pr\", \"merge\", \"12\"]}).outputSync()'"
+row ask   "deno eval 'new Deno.Command(\"gh\", {args: [\"--repo\", \"o/r\", \"issue\", \"close\", \"5\"]}).outputSync()'"
+row ask   "deno eval 'new Deno.Command(\"niwa\", {cwd: \"x\", stdout: \"piped\", env: {A: \"b\"}, args: [\"reap\"]}).outputSync()'"
+# A longer options object before the args key, and a quoted git option value
+# holding a statement separator before push.
+row ask   "deno eval 'new Deno.Command(\"gh\", {cwd: \"x\", stdout: \"piped\", stderr: \"piped\", stdin: \"null\", clearEnv: true, env: {A: \"b\", C: \"d\"}, args: [\"pr\", \"merge\", \"12\"]}).outputSync()'"
+row ask   "deno eval 'new Deno.Command(\"niwa\", {cwd: \"x\", stdout: \"piped\", stderr: \"piped\", stdin: \"null\", clearEnv: true, env: {A: \"b\", C: \"d\"}, args: [\"reap\"]}).outputSync()'"
+row ask   "python3 -c 'import subprocess; subprocess.run([\"git\", \"-c\", \"a.b=x;y\", \"push\", \"-f\", \"origin\", \"x\"])'"
+row ask   "python3 -c 'import subprocess; subprocess.run([\"git\", \"-c\", \"a.b=x|y\", \"-c\", \"c.d=1&2\", \"push\", \"--force\", \"origin\", \"x\"])'"
+row ask   "python3 -c 'import os; os.system(\"git -c \\\"a.b=x;y\\\" push -f origin x\")'"
+# An options object before the args key of a git call, a quoted key, and a
+# git option the push rule already knew takes a value.
+row ask   "deno eval 'new Deno.Command(\"git\", {cwd: \"x\", args: [\"push\", \"-f\", \"origin\", \"x\"]}).outputSync()'"
+row ask   "deno eval 'new Deno.Command(\"git\", {\"cwd\": \"x\", \"args\": [\"push\", \"--force\", \"origin\", \"x\"]}).outputSync()'"
+row ask   "deno eval 'new Deno.Command(\"niwa\", {\"cwd\": \"x\", \"args\": [\"reap\"]}).outputSync()'"
+row ask   "python3 -c 'import subprocess; subprocess.run([\"git\", \"--super-prefix\", \"p/\", \"push\", \"-f\", \"origin\", \"x\"])'"
+row allow "deno eval 'new Deno.Command(\"git\", {cwd: \"x\", args: [\"push\", \"origin\", \"x\"]}).outputSync()'"
+# A flag between gh subcommand words or between niwa and reap, an option
+# value written as interpolation or with a quote inside it, a separator
+# alone as the value, and force in a flag cluster or a refspec starting @.
+row ask   "python3 -c 'import subprocess; subprocess.run([\"gh\", \"pr\", \"-R\", \"o/r\", \"merge\", \"1\"])'"
+row ask   "python3 -c 'import subprocess; subprocess.run([\"gh\", \"repo\", \"--repo\", \"o/r\", \"delete\", \"--yes\"])'"
+row ask   "python3 -c 'import subprocess; subprocess.run([\"niwa\", \"--no-progress\", \"reap\"])'"
+row ask   "deno eval 'new Deno.Command(\"niwa\", {args: [\"-C\", \"d\", \"reap\"]}).outputSync()'"
+row ask   "python3 -c 'import subprocess; subprocess.run([\"git\", \"push\", \"origin\", \"+:main\"])'"
+row ask   "python3 -c 'import subprocess, sys; b = sys.argv[1]; subprocess.run([\"git\", \"push\", \"origin\", f\"+{b}\"])'"
+row allow "python3 -c 'import subprocess; subprocess.run([\"git\", \"push\", \"origin\", \"main\"]); n = 1; print(n + 1)'"
+row ask   "python3 -c 'import os, sys; d = sys.argv[1]; os.system(f\"git -C {d} push -f origin x\")'"
+row ask   "python3 -c 'import os; os.system(\"git -c a.b=\\\"x;y\\\" push -f origin x\")'"
+row ask   "python3 -c 'import subprocess; subprocess.run([\"git\", \"-c\", \";\", \"push\", \"-f\", \"origin\", \"x\"])'"
+row ask   "python3 -c 'import subprocess; subprocess.run([\"git\", \"push\", \"-fo\", \"x\", \"origin\", \"main\"])'"
+row ask   "python3 -c 'import subprocess; subprocess.run([\"git\", \"push\", \"origin\", \"+@:main\"])'"
+row allow "python3 -c 'import subprocess; subprocess.run([\"git\", \"-C\", \"repo\", \"log\", \"-1\"]); print(\"push\", \"-f\")'"
+# A workflow run gets the verdict the shell path gives it: only a release
+# workflow asks.
+row allow "python3 -c 'import subprocess; subprocess.run([\"gh\", \"workflow\", \"run\", \"ci.yml\"])'"
+row ask   "python3 -c 'import subprocess; subprocess.run([\"gh\", \"workflow\", \"run\", \"prepare-release.yml\"])'"
+# A workflow selector the code fills in, or a workflow id, can't be read, as
+# on the shell path; a literal .yml name can.
+row ask   "python3 -c 'import subprocess, sys; wf = sys.argv[1]; subprocess.run([\"gh\", \"workflow\", \"run\", wf])'"
+row ask   "node -e 'require(\"child_process\").execSync(\"gh workflow run \" + process.argv[1])'"
+row ask   "python3 -c 'import subprocess; subprocess.run([\"gh\", \"workflow\", \"run\", \"98765\"])'"
+row allow "node -e 'require(\"child_process\").execSync(\"gh workflow run ci.yml --ref main\")'"
+# Only git options between git and push, however many, with a value written
+# as interpolation or joined pieces, or an options object of many keys before
+# the args key; force as -fo, or a refspec starting + then @ or :.
+row ask   "deno eval 'new Deno.Command(\"git\", {cwd: \"x\", stdout: \"piped\", stderr: \"piped\", stdin: \"null\", clearEnv: false, env: {GIT_TERMINAL_PROMPT: \"0\", LANG: \"C\", HOME: \"/h\"}, uid: 1, gid: 1, args: [\"push\", \"-f\", \"origin\", \"x\"]}).outputSync()'"
+row ask   "python3 -c 'import os; os.system(\"git -c a=1 -c b=2 -c c=3 -c d=4 -c e=5 -c f=6 -c g=7 -c h=8 -c i=9 -c j=10 -c k=11 -c l=12 -c m=13 push -f origin x\")'"
+row ask   "python3 -c 'import subprocess, sys; n = sys.argv[1]; subprocess.run([\"git\", \"-c\", f\"user.name={n}\", \"push\", \"-f\", \"origin\", \"x\"])'"
+row ask   "node -e 'const d = process.argv[1]; require(\"child_process\").execSync(\`git -C \${d}/sub push --force origin x\`)'"
+row ask   "python3 -c 'import os; os.system(\"git push -fo ci.skip origin main\")'"
+row ask   "node -e 'require(\"child_process\").execFileSync(\"git\", [\"push\", \"origin\", \"+@{u}:main\"])'"
+row ask   "node -e 'require(\"child_process\").execFileSync(\"git\", [\"push\", \"origin\", \"+:refs/heads/x\"])'"
+# A -R or -C value the code fills in, between the gh pair words or before
+# reap.
+row ask   "python3 -c 'import subprocess; o, r = \"a\", \"b\"; subprocess.run([\"gh\", \"pr\", \"-R\", f\"{o}/{r}\", \"merge\", \"1\"])'"
+row ask   "deno eval 'const d = \"w\"; new Deno.Command(\"niwa\", {args: [\"-C\", \`\${d}/x\`, \"reap\"]}).outputSync()'"
+# Ordinary code: a word that is not a git option between git and push, and a
+# -file, -format or -fPIC word on the line of a plain push, are no gated call.
+row allow "python3 -c 'from git import Repo; git = Repo(\".\"); jobs = {\"push\": \"-f\"}; print(jobs)'"
+row allow "python3 -c 'import subprocess; subprocess.run([\"git\", \"push\", \"origin\", \"main\"]); subprocess.run([\"cc\", \"-fPIC\", \"-c\", \"x.c\"])'"
+row allow "node -e 'require(\"child_process\").execSync(\"git push origin main\"); console.log(\"-file\", \"-format\")'"
+# A -> or -- between gh pair words is no flag to the strict walk, but the
+# wide reading finds the pair in order and asks, failing closed as issue
+# #64 asks where the hook can't normalize the command.
+row ask   "python3 -c 'print(\"gh pr -> merge queue\")'"
+row ask   "python3 -c 'print(\"gh issue -- close it later\")'"
+# Between git and push: a spread or splat of a list of options, git held in
+# a variable, a string prefix before a flag, a quoted value holding blanks or
+# a subcommand name, an options object whose value names a subcommand, and
+# --attr-source with its value. A literal workflow name after a --ref value.
+row ask   "python3 -c 'import subprocess; subprocess.run([\"git\", *opts, \"push\", \"-f\"])'"
+row ask   "node -e 'const {spawn} = require(\"child_process\"); spawn(\"git\", [...base, \"push\", \"-f\"])'"
+row ask   "python3 -c 'import subprocess; g = \"git\"; subprocess.run([g, \"push\", \"-f\"])'"
+row ask   "python3 -c 'import subprocess; subprocess.run([\"git\", f\"--git-dir={d}\", \"push\", \"-f\"])'"
+row ask   "python3 -c 'import subprocess; subprocess.run([\"git\", \"-c\", \"core.sshCommand=ssh -i k\", \"push\", \"-f\"])'"
+row ask   "python3 -c 'import os; os.system(\"git -C \\\"/tmp/my log\\\" push -f origin x\")'"
+row ask   "deno eval 'new Deno.Command(\"git\", {cwd: \"config\", args: [\"push\", \"-f\", \"origin\", \"x\"]}).outputSync()'"
+row ask   "python3 -c 'import subprocess; subprocess.run([\"git\", \"--attr-source\", \"log\", \"push\", \"-f\"])'"
+row allow "python3 -c 'import subprocess; subprocess.run([\"gh\", \"workflow\", \"run\", \"--ref\", \"main\", \"ci.yml\"])'"
+# A -- after a flag between gh pair words still reaches the second word. A
+# -- right after the first word is text to the strict walk, but a safe gh
+# call followed by the printed pair words asks under the wider reading.
+row ask   "python3 -c 'import subprocess; subprocess.run([\"gh\", \"release\", \"-R\", \"o/r\", \"--\", \"create\", \"v1\"])'"
+row ask   "python3 -c 'import subprocess; subprocess.run([\"gh\", \"release\", \"view\", \"--json\", \"tagName\"]); print(\"release --\", \"create notes by hand\")'"
+# Ordinary code these readings could reach: git assigned to a name that is
+# then used as data, a quoted option value before another subcommand, and an
+# args key in a later statement than the git call.
+row allow "python3 -c 'import subprocess; exe = \"git\"; jobs = []; jobs.append(exe); print(\"push\", \"-f\")'"
+row allow "python3 -c 'import subprocess; subprocess.run([\"git\", \"-c\", \"core.pager=cat\", \"log\", \"-1\"]); print(\"push\", \"-f\")'"
+row allow "python3 -c 'import os; os.system(\"git -C \\\"my repo\\\" log -1\"); print(\"push\", \"-f\")'"
+row allow "deno eval 'const c = new Deno.Command(\"git\", {cwd: \"repo\"}); const opts = {args: [\"push\", \"-f\"]}; console.log(c, opts)'"
+# The words gh, pr and merge far apart in unrelated strings: a deny pair
+# named anywhere in the code asks.
+row ask   "python3 -c 'print(\"gh\"); print(\"one two three four five six seven eight nine ten eleven twelve\"); print(\"thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty more words\"); print(\"pr\", \"merge\")'"
+# A gh or niwa call that is not the gated one, with a gated word later in
+# the code: the wide reading finds the pair in order and asks, failing
+# closed as issue #64 asks where the hook can't normalize the command.
+row ask   "python3 -c 'import subprocess; out = subprocess.run([\"gh\", \"pr\", \"list\"], capture_output=True).stdout; merge = out.strip(); print(merge)'"
+row ask   "python3 -c 'import subprocess; subprocess.run([\"gh\", \"issue\", \"list\"]); close = [1, 2]; print(close)'"
+row ask   "ruby -e 'system(\"gh\", \"release\", \"list\"); create = true; puts create'"
+row ask   $'python3 <<\'EOF\'\nimport subprocess\nsubprocess.run(["niwa", "list"])\n# nothing here to reap yet\nEOF'
+# A git call that is not a push, or no git call, with a push word later in
+# the code (an array push, a printed push, a push key in data): only git
+# options may sit between git and push, and a statement separator ends the
+# wider reading's run, so these stay allowed.
+row allow "node -e 'const r = require(\"child_process\").execSync(\"git rev-list --count HEAD\"); const a = []; a.push(Number(r) + 1); console.log(a)'"
+row allow "node -e 'const b = require(\"child_process\").execSync(\"git branch --show-current\"); const q = []; q.push(\"+\" + b, \"-f\")'"
+row allow "python3 -c 'import subprocess; subprocess.run([\"git\", \"status\"]); print(\"push\", \"-f\")'"
+row allow "python3 -c 'stats = {}; stats[\"push\"] = stats.get(\"push\", 0) + 1; print(stats)'"
+row allow "perl -e 'my %stats; \$stats{push} += 1; print \$stats{push}'"
+
+# The wider reading kept beside the strict walk: gh or niwa with its gated
+# subcommand words reached through pieces the walk doesn't step over (dict
+# lookups, a split string, a joined list, a comprehension, a later extend),
+# and a git force-push string beside other code.
+row ask   "python3 -c 'import subprocess; o = {\"a\": \"gh\", \"b\": \"release\", \"c\": \"create\"}; subprocess.run([o[\"a\"], o[\"b\"], o[\"c\"], \"v9\"])'"
+row ask   "python3 -c 'import subprocess; o = {\"a\": \"gh\", \"b\": \"pr\", \"c\": \"merge\"}; subprocess.run([o[\"a\"], o[\"b\"], \"-R\", \"o/r\", o[\"c\"], \"12\"])'"
+row ask   "python3 -c 'import subprocess; subprocess.call(\"gh|issue|--repo|o/r|close|5\".split(\"|\"))'"
+row ask   "python3 -c 'import os; os.system(\" \".join([\"gh\", \"auth\", \"--hostname\", \"h.example\", \"switch\"]))'"
+row ask   "python3 -c 'import subprocess; subprocess.run([p for p in (\"gh\", \"x\", \"issue\", \"y\", \"close\", \"3\") if p not in \"xy\"])'"
+row ask   "python3 -c 'import subprocess; a = [\"gh\", \"release\"]; a.extend([\"create\", \"v2\"]); subprocess.run(a)'"
+row ask   "python3 -c 'import subprocess; a = [\"gh\", \"pr\"]; a.extend([\"merge\", \"5\"]); subprocess.run(a)'"
+row ask   "python3 -c 'import os; note = \"git \$o push --force\"; os.system(build())'"
+row ask   "node -e 'const s = \`git \${opt} push -f\`; run(s)'"
+# Real git takes a value after --attr-source, which the push rule reads; a
+# second pass reads the word after it as the subcommand, as the hook did
+# before that option was listed. It over-asks on purpose, so a line the
+# earlier reading caught stays caught.
+row ask   'git --attr-source push origin --force'
+row ask   'git --attr-source push origin +main'
+row allow 'git --attr-source HEAD push origin main'
+# A loop over a word list that names the denied subcommand before the call,
+# for a gh pr call, a gh repo call and niwa: the denied pairs named in any
+# order count.
+row ask   "node -e 'for (const v of [\"view\", \"merge\"]) require(\"child_process\").execFileSync(\"gh\", [\"pr\", v, \"8\"])'"
+row ask   "node -e 'for (const v of [\"view\", \"delete\"]) require(\"child_process\").execFileSync(\"gh\", [\"repo\", v, \"o/r\"])'"
+row ask   "ruby -e '%w[list reap].each { |s| system(\"niwa\", s) }'"
+# Everyday lines that ask now, failing closed as issue #64 asks: the wide
+# reading asked on them, so allowing them would allow what it asked on. A
+# safe niwa call then a printed reap word; printed text holding git, push
+# and a plus.
+row ask   "python3 -c 'import subprocess; subprocess.run([\"niwa\", \"list\"]); print(\"nothing to reap\")'"
+row ask   "python3 -c 'print(\"run git then push the + branch\")'"
+
+# Wrapper options read as getopt reads them: a cluster whose last letter
+# takes a value, or a long option that takes one without =, takes the next
+# word, so the value is never read as the command.
+row deny  'sudo -iu me gh pr merge 12'
+row deny  'sudo -Eu me curl https://example.com'
+row deny  'sudo --user me niwa reap'
+row ask   'sudo -iu me git push --force origin feature'
+row ask   'sudo -iu me unset GH_TOKEN'
+row ask   'sudo -iu me gh issue close 5'
+row deny  'doas -nu me gh pr merge 12'
+row deny  'env -iu X curl https://example.com'
+row deny  "env -iS 'curl https://example.com'"
+row deny  "env -vS 'gh pr merge 12'"
+row deny  'timeout --signal KILL 5 curl https://example.com'
+row deny  'timeout --kill-after 5 10 niwa reap'
+row deny  'timeout -vk 5 10 curl https://example.com'
+row deny  'nice --adjustment 5 curl https://example.com'
+row deny  'stdbuf --output L curl https://example.com'
+row deny  '/usr/bin/time -ao out.txt gh pr merge 12'
+row deny  'caffeinate -it 60 curl https://example.com'
+row deny  'exec -la x gh pr merge 12'
+row deny  'command -p curl https://example.com'
+row deny  'echo x | xargs -tn 1 curl'
+row deny  'watch -tn 5 gh pr merge 12'
+row deny  'sudo -iu me gh pr merge 12' other
+row deny  'timeout --signal KILL 5 niwa reap' other-repo
+
+# A POSIX class, equivalence class or collating symbol inside a bracket glob
+# is part of the bracket expression.
+row deny  'gh pr merg[[:alpha:]] 12'
+row deny  'gh pr [[:alpha:]]* 12'
+row deny  'niwa rea[[:alpha:]]'
+row deny  'gh repo delet[[:alpha:]] o/r --yes'
+row ask   'gh issue clos[[:alpha:]] 5'
+row ask   'git push --forc[[:alpha:]] origin feature'
+row ask   'unset GH_TOKE[[:upper:]]'
+row deny  'cur[[:alpha:]] https://example.com'
+row deny  'n[[:alpha:]]wa reap'
+row deny  'gh pr merg[[=e=]] 12'
+row deny  'gh pr merg[[.e.]] 12'
+row deny  'gh pr merg[[:alpha:]] 12' other
+row deny  'cur[[:alpha:]] https://example.com' other-repo
+
+# A shell reads its script from a pipe whenever no word after its flags is a
+# script file, and with -s even when words follow.
+row ask   "echo 'gh pr merge 12' | bash -s"
+row ask   "echo 'gh pr merge 12' | sh -s -- a"
+row ask   "echo 'gh pr merge 12' | zsh -s"
+row ask   "echo 'niwa reap' | sh -s"
+row ask   "echo 'git push --force' | bash -e"
+row ask   "echo 'gh issue close 5' | sh -x"
+row ask   "echo 'gh pr merge 12' | bash -euo pipefail"
+row ask   "echo 'gh pr merge 12' | bash -s" other-repo
+
+# --- Ordinary lines these readings must leave alone -----------------------
+# A command word that is a quoted path built from a variable, a script run
+# that way and chained to another command, and everyday uses of globs,
+# braces, wrappers and interpreters. None of these may ask or deny.
+row allow 'S=x; P=/p; "$P/skills/coordinate/scripts/state-open.sh" --session "$S" && koto next $S --no-cleanup'
+row allow 'S=x; P=/p; "$P/skills/coordinate/scripts/state-open.sh" --session "$S" && koto next $S --no-cleanup' other
+row allow '"$SCRIPT" --repo o/r status'
+row allow '"$P/scripts/run.sh" "$S" && "$P/scripts/check.sh" --flag x'
+row allow 'cd "$REPO" && "$REPO/scripts/test.sh" -v'
+row allow '"$HOME/bin/tool" list | jq .'
+row allow '"$P/scripts/run.sh" *'
+row allow '"$P/scripts/run.sh" --files *.md'
+row allow '"$P/scripts/run.sh" "$S" && gh pr view 12 --json state | jq -r .state'
+row allow 'koto next wf --with-data @/tmp/e.json --no-cleanup'
+row allow 'gh pr view 12 --json state | jq -r .state'
+row allow 'gh pr checks 12 && gh pr view 12'
+row allow 'gh issue list --label bug --json number,title | jq -r '\''.[] | "\(.number) \(.title)"'\'
+row allow 'gh api repos/o/r/pulls?per_page=100 --paginate'
+row allow 'noglob gh api repos/o/r/pulls?state=open'
+row allow 'gh api graphql -f query='\''query { viewer { login } }'\'
+row allow 'gh api -X POST repos/o/r/issues -f title=t -f body=b'
+row allow 'ls *.sh | xargs shellcheck'
+row allow 'find . -name '\''*.go'\'' -exec gofmt -l {} +'
+row allow 'find . -name '\''*.sh'\'' -exec shellcheck {} \;'
+row allow 'find . -type f -name '\''*.tmp'\'' -delete'
+row allow 'fd -e go -x gofmt -l'
+row allow 'gh pr list -q '\''.[].number'\'' --json number | xargs -I{} gh pr view {}'
+row allow 'gh pr list --json number -q '\''.[].number'\'' | xargs -n1 gh pr view'
+row allow 'git log --oneline -5 | awk '\''{print $1}'\'' | xargs -n1 git show --stat'
+row allow 'ls | xargs "$TOOL"'
+row allow 'xargs -0 rm -f < list'
+row allow 'python3 -c '\''import json,sys; print(json.load(sys.stdin)["a"])'\'' < f.json'
+row allow 'gh pr view 12 --json body -q .body | python3 -c '\''import sys; print(sys.stdin.read().upper())'\'
+row allow 'echo '\''{"a":1}'\'' | python3 -c '\''import json,sys; print(json.dumps(json.load(sys.stdin), indent=2))'\'
+row allow 'cat data.json | python3 -m json.tool'
+row allow 'python3 scripts/check.py --all'
+row allow 'node scripts/build.js'
+row allow 'node -r dotenv/config scripts/build.js'
+row allow 'python3 -W ignore scripts/check.py'
+row allow 'node -e '\''console.log(process.version)'\'
+row allow 'ruby -e '\''puts 1+1'\'
+row allow 'awk '\''{print $1}'\'' f'
+row allow 'awk -F, '\''{s+=$2} END {print s}'\'' data.csv'
+row allow 'perl -pi -e '\''s/foo/bar/'\'' f'
+row allow 'perl -ne '\''print if /foo/'\'' f'
+row allow 'osascript -e '\''display notification "done"'\'
+row allow 'mkdir -p d/{a,b}'
+row allow 'mkdir -p src/{cmd,internal/{a,b}}'
+row allow 'cp f{,.bak}'
+row allow 'echo x{1..3}y'
+row allow 'for i in {1..1000}; do echo "$i"; done'
+row allow 'git diff HEAD@{1}'
+row allow 'git checkout HEAD~1 -- f'
+row allow 'git push origin HEAD~1:refs/heads/x'
+row allow 'git push origin feature/*'
+row allow 'git push -u origin "$(git branch --show-current)"'
+row allow 'echo $?'
+row allow 'time go test ./...'
+row allow 'time (make; make test)'
+row allow '/usr/bin/time -p make'
+row allow 'timeout 30 koto next wf'
+row allow 'caffeinate -i make test'
+row allow 'arch -arm64 brew install jq'
+row allow 'script -q /dev/null make test'
+row allow 'watch -n 5 gh pr checks 12'
+row allow "watch -n 2 'ls -l | wc -l'"
+row allow "env -S 'make -j4' test"
+row allow 'env -u GH_TOKEN gh pr view 1'
+row allow 'for f in "$D"/*.md; do wc -l "$f"; done'
+row allow 'for f in *.go; do gofmt -l "$f"; done'
+row allow 'chmod +x scripts/*.sh'
+row allow 'foo() { echo hi; }'
+row allow 'arr=(a b c); echo "${arr[@]}"'
+row allow 'if (( 1 > 0 )); then echo y; fi'
+row allow 'echo $(( 2 * (3 + 4) ))'
+row allow '[[ $x =~ ^(a|b)$ ]] && echo m'
+row allow 'case "$x" in (a) echo a;; esac'
+row allow 'true && (cd sub; make test)'
+row allow 'diff <(sort a) <(sort b)'
+row allow 'echo a | tee >(wc -l)'
+row allow 'printf '\''%s\n'\'' a b | while read l; do echo "$l"; done'
+# Wrapper options that take a value, before an ordinary command.
+row allow 'sudo -iu me make test'
+row allow 'sudo --user me make test'
+row allow 'timeout --signal KILL 5 make test'
+row allow 'timeout -vk 5 10 make test'
+row allow 'env -iu X make test'
+row allow 'nice --adjustment 5 make test'
+row allow 'echo x | xargs -tn 1 echo'
+row allow 'ls | xargs -I{} -n1 echo {}'
+# Bracket globs with POSIX classes.
+row allow 'ls -d [[:upper:]]*.md'
+row allow 'rm -f [[:digit:]]*.tmp'
+# A shell reading an ordinary script from a pipe, or given a script file.
+row allow 'echo "go test ./..." | bash -s'
+row allow 'cat setup.sh | bash -s -- --verbose'
+row allow 'bash -euo pipefail scripts/check.sh'
+row allow 'gh pr view 12 --json body -q .body | bash -n scripts/check.sh'
+# An array push in inline code, with a + or a -f test later on the line.
+row allow "node -e 'const a = []; a.push(1); console.log(a.length + 1)'"
+row allow "perl -e 'my @a; push @a, 1; print scalar(@a) + 1'"
+row allow 'perl -e '\''for (@ARGV) { push @a, $_ if -f $_ } print scalar(@a)'\'' *'
+row allow "ruby -e 'a = []; a.push 1; puts a.size + 1'"
+# git push fed by xargs: the words it reads count as a $VAR word does.
+row allow 'git branch | xargs -I{} git push origin {}'
+row allow 'git branch --format=x | xargs -n1 git push origin'
+row allow 'echo main | xargs git push origin'
+# command -v and -V only look a name up.
+row allow 'command -v curl >/dev/null || echo missing'
+row allow 'if command -v wget >/dev/null; then echo y; fi'
+row allow 'command -V gh'
+# A zsh glob group in a path argument is part of the file pattern, not a
+# subshell, even when it lists a network tool name.
+row allow 'ls -d docs/(curl|wget).md'
+row allow 'command -pv niwa'
 
 # ===================================================== the dispatch's grant
 #
