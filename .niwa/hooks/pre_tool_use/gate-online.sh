@@ -115,7 +115,8 @@
 # niwa reap is denied on a literal niwa with any flags ahead of it: a flag
 # takes at most one value, --no-progress takes none, and the first plain word
 # no flag could own is the subcommand. Text handed to a shell that holds niwa,
-# flags and reap asks. A non-literal command name is read as before.
+# flags and reap asks, since the hook can't tell whether that text runs as a
+# command. A non-literal command name is read as before.
 #
 # Scratch reap. One reap is allowed: a workspace a check made for itself and
 # declared scratch, reaped with exactly
@@ -130,8 +131,9 @@
 #   - is in, above or equal to this hook's own workspace;
 #   - holds .niwa/.niwa-snapshot.toml (a config taken from a source), a .git
 #     where niwa clones repos, or a .niwa that is a git working tree;
-#   - carries an installed copy of this hook, at its root or in an instance
-#     (a workspace this hook guards is never a scratch made for a check);
+#   - carries an installed copy of this hook, in its config's hooks, at its
+#     root or in an instance (a workspace this hook guards is never a scratch
+#     made for a check);
 #   - holds an entry named niwa, or this hook's PATH has an empty or relative
 #     entry.
 # Limits: anyone who can write in a workspace can declare it, so a bare
