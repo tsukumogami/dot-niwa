@@ -381,6 +381,8 @@ hookroot=$sbase/hookroot; sws "$hookroot"; mkdir -p "$hookroot/.claude/hooks/pre
 cp "$hook" "$hookroot/.claude/hooks/pre_tool_use/gate-online.sh"
 hookcfg=$sbase/hookcfg; sws "$hookcfg"; mkdir -p "$hookcfg/.niwa/hooks/pre_tool_use"
 ln -s "$hook" "$hookcfg/.niwa/hooks/pre_tool_use/gate-online.sh"
+# An instance entry that links to an instance carrying a copy.
+hooklink=$sbase/hooklink; sws "$hooklink"; ln -s "$hookinst/hookinst-1" "$hooklink/hooklink-1"
 # The hook's own workspace, declared: a copy of the hook run from inside it,
 # placed where the installed-copy check doesn't look, so only the own-workspace
 # check refuses.
@@ -432,6 +434,7 @@ row deny  "cd $rootniwa && niwa reap"
 row deny  "cd $hookinst && niwa reap"
 row deny  "cd $hookroot && niwa reap"
 row deny  "cd $hookcfg && niwa reap"
+row deny  "cd $hooklink && niwa reap"
 # This hook's PATH holds a relative or empty entry.
 row deny  "cd $scr && niwa reap" path-dot
 row deny  "cd $scr && niwa reap" path-empty
