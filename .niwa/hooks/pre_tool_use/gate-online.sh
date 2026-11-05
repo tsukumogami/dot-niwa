@@ -112,6 +112,37 @@
 #         git push with --force, --force-with-lease, -f or a +refspec,
 #         a release workflow dispatch
 #
+# niwa reap is denied on a literal niwa with any flags ahead of it: a flag
+# takes at most one value, --no-progress takes none, and the first plain word
+# no flag could own is the subcommand. Text handed to a shell that holds niwa,
+# flags and reap asks. A non-literal command name is read as before.
+#
+# Scratch reap. One reap is allowed: a workspace a check made for itself and
+# declared scratch, reaped with exactly
+#     cd <root> && niwa [--no-progress] reap [--no-progress|--help|-h]
+# as the whole command. <root> is a literal absolute path in
+# [A-Za-z0-9._+/-], with no //, . or .. component, and equal to its own
+# physical path, which is what `pwd -P` prints in it (on macOS a mktemp path
+# is /private/var/..., not /var/...). The declaration is .niwa/scratch-check
+# at <root>, a regular file, not a symlink, whose first line is <root>. The
+# payload's cwd plays no part. The allowance is refused, and the deny stands
+# with its message, when <root>:
+#   - is in, above or equal to this hook's own workspace;
+#   - holds .niwa/.niwa-snapshot.toml (a config taken from a source), a .git
+#     where niwa clones repos, or a .niwa that is a git working tree;
+#   - carries an installed copy of this hook, at its root or in an instance
+#     (a workspace this hook guards is never a scratch made for a check);
+#   - holds an entry named niwa, or this hook's PATH has an empty or relative
+#     entry.
+# Limits: anyone who can write in a workspace can declare it, so a bare
+# niwa init workspace with no repo, no snapshot and no hook copy is
+# reapable once declared. An allowed reap runs the scratch's own
+# [session.on_reap] and [session.before_remove]. The hook checks the path and
+# exits before the shell runs the cd, so a swap of the directory in between
+# isn't seen. The flag walk reads --no-progress as taking no value; a niwa
+# change to its root flags reviews this hook (tests/niwa-flags.test.sh pins
+# it).
+#
 # A release workflow dispatch is gh workflow run, or a gh api call other than
 # a GET to repos/<owner>/<repo>/actions/workflows/<selector>/dispatches,
 # whose selector is prepare-release.yml, prepare-release.yaml,
@@ -606,11 +637,20 @@ function mentions(t) {
            t ~ /push[ \t]([^\n;&|]*[ \t])?(--force|-[A-Za-z]*f[A-Za-z]*([ \t\n;&|]|$)|\+)/
 }
 
+# Whether text t holds niwa, then flags, then the whole word reap, where a flag
+# may have one value after it. --no-progress takes no value, so it is removed
+# first, from this copy of t: an alternation could not stop that word from
+# matching as a flag with the next word as its value.
+function flagreap(t) {
+    while (gsub(/(^|[ \t\n])--no-progress([ \t\n]|$)/, " ", t) > 0) { }
+    return t ~ /niwa[ \t\n]+(-[^ \t\n;&|]*[ \t\n]+([^- \t\n;&|][^ \t\n;&|]*[ \t\n]+)?)*reap([^-A-Za-z0-9_.\/=:+]|$)/
+}
+
 # mentions() less its force push reading, which each caller adds its own way.
 function gmentions(t) {
     return t ~ /gh[ \t\n]+(pr[ \t\n]+merge|repo[ \t\n]+delete|auth[ \t\n]+switch|release[ \t\n]+create|issue[ \t\n]+close)/ ||
            t ~ /pulls\/[^\/ \t\n]+\/merge|mergePullRequest|enablePullRequestAutoMerge/ ||
-           t ~ /niwa[ \t\n]+reap|unset[ \t\n]+GH_TOKEN/ ||
+           t ~ /niwa[ \t\n]+reap|unset[ \t\n]+GH_TOKEN/ || flagreap(t) ||
            tolower(t) ~ /prepare-release|release-prepare|prepare[ \t]+release/ ||
            t ~ /actions\/workflows\/[^ \t\n]*\/dispatches/ ||
            t ~ /(^|[^A-Za-z0-9_.-])(curl|wget|nc|ncat|netcat)([ \t\n]|$)/
@@ -1150,6 +1190,28 @@ function rules(s, h, a, m,   x, k, meth, t, n, w, wd, merge, ep, writes, lx, r, 
         return rd != ""
     }
     if (h == "niwa") {
+        # The widened reading runs only for a command name that is literally
+        # niwa. A non-literal name reaches this branch as a strict trial, and
+        # an ordinary script run through a variable must not read as a reap.
+        if (!strict) {
+            # A flag takes zero or one values, so reap can only be the
+            # subcommand in place of a flag or just after one. The first plain
+            # word no flag could own is the subcommand, and that word is not
+            # reap; its arguments run no reap. --no-progress takes no value.
+            # x: the word before was a flag that may take one.
+            x = 0
+            for (k = a; k <= m; k++) {
+                if (segw[s, k] == "reap") { rd = "deny"; rr = "niwa reap"; return 1 }
+                if (segd[s, k] || segw[s, k] ~ /[{}*?[(]|[@?*+!]$/) { guessed = 1; rd = "deny"; rr = "niwa reap"; return 1 }
+                if (segw[s, k] == "--no-progress") x = 0
+                else if (segw[s, k] ~ /^-/) x = 1
+                else if (x) x = 0
+                else break
+            }
+            # No subcommand word at all: what follows may supply it.
+            for (k = a; k <= m; k++) if (segw[s, k] !~ /^-/) break
+            if (k > m && src ~ /niwa[ \t]+[^;&|\n]*reap/) { rd = "deny"; rr = "niwa reap"; return 1 }
+        }
         for (k = a; k <= m; k++) if (segw[s, k] !~ /^-/) break
         if (k <= m && (r = kw(s, k, "reap"))) {
             if (r == 2) guessed = 1
@@ -1615,6 +1677,160 @@ decide() {
         ask)  emit ask "Online operation requires confirmation: $2" ;;
     esac
 }
+
+# ---------------------------------------------------------------- scratch reap
+
+# physical DIR: prints DIR with every symlink resolved, or fails, as it does
+# for a resolved path holding a control character. The x keeps command
+# substitution from stripping a trailing newline that is part of the path.
+physical() {
+    local p
+    [ -n "$1" ] || return 1
+    p=$(CDPATH= cd -P -- "$1" >/dev/null 2>&1 && pwd -P && printf x) || return 1
+    p=${p%$'\n'x}
+    case "$p" in *[[:cntrl:]]*) return 1 ;; esac
+    printf '%s\n' "$p"
+}
+
+# within A B: succeeds when A is B or lies under it, compared by file
+# identity. A path that can't be resolved counts as within, so the caller
+# refuses.
+within() {
+    local a
+    a=$(physical "$1") || return 0
+    while :; do
+        [ "${a:-/}" -ef "$2" ] && return 0
+        [ -n "$a" ] || return 1
+        a=${a%/*}
+    done
+}
+
+# own_of DIR: prints the outermost directory at or above DIR, walking DIR as
+# written, that holds a workspace config or an instance record, or fails.
+own_of() {
+    local d=$1 own=
+    while :; do
+        if [ -e "$d/.niwa/workspace.toml" ] || [ -e "$d/.niwa/instance.json" ] ||
+            [ -e "$d/.niwa.prev/workspace.toml" ]; then
+            own=${d:-/}
+        fi
+        [ -n "$d" ] || break
+        d=${d%/*}
+    done
+    [ -n "$own" ] || return 1
+    printf '%s\n' "$own"
+}
+
+# scratch_own_clear PATH: PATH is neither in this hook's own workspace nor
+# holds it, with the workspace found from this script both as written and
+# resolved. Finding none either way means no allowance.
+scratch_own_clear() {
+    local d o found=
+    case "$0" in /*) ;; *) return 1 ;; esac
+    case "$0" in *//* | */./* | */../* | *[[:cntrl:]]*) return 1 ;; esac
+    for d in "${0%/*}" "$(physical "${0%/*}")"; do
+        [ -n "$d" ] || continue
+        o=$(own_of "$d") || continue
+        found=1
+        within "$1" "$o" && return 1
+        within "$o" "$1" && return 1
+    done
+    [ -n "$found" ]
+}
+
+# scratch_guard_prov ROOT: ROOT's config is not a snapshot taken from a source.
+# niwa init --from and apply leave .niwa/.niwa-snapshot.toml; bare niwa init
+# writes none. Any file type counts, a symlink included.
+scratch_guard_prov() {
+    [ ! -e "$1/.niwa/.niwa-snapshot.toml" ] && [ ! -L "$1/.niwa/.niwa-snapshot.toml" ]
+}
+
+# scratch_guard_repo ROOT: ROOT holds no .git where niwa clones repos, at
+# <root>/<instance>/<group>/<repo>, or one level up for a root that is its own
+# instance. Any file type counts, a symlink included.
+scratch_guard_repo() {
+    local g
+    for g in "$1"/*/*/.git "$1"/*/*/*/.git; do
+        [ -e "$g" ] || [ -L "$g" ] && return 1
+    done
+    return 0
+}
+
+# scratch_guard_path ROOT: after the cd, nothing at ROOT can stand in for niwa:
+# ROOT holds no entry named niwa, and this hook's own PATH has no empty or
+# relative entry. The session's shell may carry another PATH; this is only
+# the one the hook was given.
+scratch_guard_path() {
+    [ ! -e "$1/niwa" ] && [ ! -L "$1/niwa" ] || return 1
+    case ":${PATH-}:" in *::* | *:[!/]*) return 1 ;; esac
+    return 0
+}
+
+# scratch_guard_legacy ROOT: ROOT's .niwa is not a git working tree of a config
+# source, the legacy shape niwa converts on apply. Any file type counts.
+scratch_guard_legacy() {
+    [ ! -e "$1/.niwa/.git" ] && [ ! -L "$1/.niwa/.git" ]
+}
+
+# scratch_guard_hook ROOT: ROOT carries no installed copy of this hook: none
+# in its config's hooks, at its root, or at an instance's root, where niwa
+# installs gate-online.sh (and gate-online.local.sh in each repo, which the
+# repo check already refuses). A workspace this hook guards is not a scratch
+# made for a check. Any file type counts, a symlink included.
+scratch_guard_hook() {
+    local h
+    for h in "$1"/.niwa/hooks/pre_tool_use/gate-online*.sh \
+        "$1"/.claude/hooks/pre_tool_use/gate-online*.sh \
+        "$1"/*/.claude/hooks/pre_tool_use/gate-online*.sh; do
+        [ -e "$h" ] || [ -L "$h" ] && return 1
+    done
+    return 0
+}
+
+# scratch_target ROOT: ROOT, already its own resolved path, is a real
+# workspace root, declared scratch, and not this workspace.
+scratch_target() {
+    [ "$1" != / ] || return 1
+    [ -d "$1/.niwa" ] && [ ! -L "$1/.niwa" ] || return 1
+    [ -f "$1/.niwa/workspace.toml" ] && [ ! -L "$1/.niwa/workspace.toml" ] || return 1
+    scratch_declares "$1" || return 1
+    scratch_guard_prov "$1" || return 1
+    scratch_guard_repo "$1" || return 1
+    scratch_guard_path "$1" || return 1
+    scratch_guard_legacy "$1" || return 1
+    scratch_guard_hook "$1" || return 1
+    scratch_own_clear "$1"
+}
+
+# scratch_declares ROOT: .niwa/scratch-check is a regular file, not a symlink,
+# whose first line is ROOT.
+scratch_declares() {
+    local line
+    [ -f "$1/.niwa/scratch-check" ] && [ ! -L "$1/.niwa/scratch-check" ] || return 1
+    IFS= read -r -n 4096 line < "$1/.niwa/scratch-check" || [ -n "$line" ] || return 1
+    [ "$line" = "$1" ]
+}
+
+# scratch_literal_ok PATH: PATH came from the command text, in the safe
+# character set. It has no . or .. component and is its own resolved path, so
+# no symlink component and no other spelling of it, and it is the declared
+# root. The payload's cwd plays no part.
+scratch_literal_ok() {
+    case "$1/" in *//* | */./* | */../*) return 1 ;; esac
+    [ "$(physical "$1")" = "$1" ] || return 1
+    scratch_target "$1"
+}
+
+# niwa reap as the whole command, with only the flags niwa takes there, after
+# one cd to a literal absolute path that is the root of a workspace declared
+# scratch: the reap deny is lifted. The path set holds no quote, expansion,
+# glob or space.
+SCRATCH_CD_FORM='^cd +(/[A-Za-z0-9._+/-]+) +&& +niwa( +--no-progress)? +reap( +(--no-progress|--help|-h))*$'
+if [ "$TODAY" = deny ] && [ "$TODAY_WHY" = "niwa reap" ] && [ "$NEEDS" = "-" ]; then
+    if [[ $COMMAND =~ $SCRATCH_CD_FORM ]]; then
+        scratch_literal_ok "${BASH_REMATCH[1]}" && exit 0
+    fi
+fi
 
 # Nothing a grant decides, or something already denied that no grant lifts:
 # today's verdict, with no lookup.

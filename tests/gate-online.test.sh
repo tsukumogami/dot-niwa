@@ -36,6 +36,9 @@ for f in "$hook" "$old_hook"; do
         exit 1
     fi
 done
+# The scratch reap check refuses a hook path with a . or .. component, so the
+# hook runs by a plain absolute path, as niwa installs it.
+hook=$(cd "$(dirname "$hook")" && pwd)/${hook##*/}
 
 pass=0
 fail=0
@@ -110,15 +113,18 @@ session_id=0f4c5a8e-3b1d-4e2a-9c7f-1a2b3c4d5e6f
 # run HOOK COMMAND [VAR=VALUE...] -> prints "decision<TAB>reason", the
 # decision deny|ask|allow, or error:<detail>. The hook runs with an empty
 # environment plus PATH=$tools and the assignments given; a later PATH
-# replaces the first. RUN_SESSION and RUN_RELATIVE (run the hook by a
-# relative path from its own directory) change the payload and the call.
+# replaces the first. RUN_SESSION, RUN_CWD (a cwd field in the payload) and
+# RUN_RELATIVE (run the hook by a relative path from its own directory)
+# change the payload and the call.
 RUN_SESSION=
 RUN_RELATIVE=
 run() {
     local run=$1 command=$2 out status payload
     shift 2
     payload=$(jq -cn --arg c "$command" --arg s "${RUN_SESSION:-$session_id}" \
-        '{session_id:$s,tool_name:"Bash",tool_input:{command:$c}}')
+        --arg w "${RUN_CWD:-}" \
+        '{session_id:$s,tool_name:"Bash",tool_input:{command:$c}} +
+         (if $w == "" then {} else {cwd:$w} end)')
     if [ -n "$RUN_RELATIVE" ]; then
         out=$(cd "${run%/*}" && printf '%s' "$payload" |
             env -i PATH="$tools" "$@" bash "./${run##*/}")
@@ -144,13 +150,19 @@ run() {
 #   exempt, other, lookalike (and each with -repo for the per-repo copy)
 #                   an installed copy, with GATE_MERGE_EXEMPT_INSTANCE naming
 #                   the exempt instance, as every instance's settings do
+#   path-dot, path-empty
+#                   the repository copy, with a relative or an empty entry
+#                   in its PATH
+#   own-copy        a copy inside a declared fixture workspace, so that
+#                   workspace is the hook's own
+#   own-copy-cwd    the repository copy, with a payload cwd in that workspace
 #   exempt-unset    the exempt instance's copy with the var unset
 #   exempt-slash    the exempt instance's copy with a var holding a path
 #                   that its own path does end in
 # Every other mode runs with the var unset. No niwa is on PATH in any mode,
 # so these rows check the verdicts every session got before the grant.
 decide() {
-    local run=$hook var='' got
+    local run=$hook var='' got RUN_CWD=
     local -a extra=()
     case "${2:-}" in
         broken-awk) extra=(PATH="$broken:$tools") ;;
@@ -169,6 +181,10 @@ decide() {
         exempt-list-blanks) run=$exempt_hook var=,$exempt_name, ;;
         exempt-list-slash) run=$exempt_hook var=new/$exempt_name,$exempt_name ;;
         other-list-absent) run=$other_hook var=$exempt_name,ws+third_one-deadbeef ;;
+        path-dot) extra=(PATH=".:$tools") ;;
+        path-empty) extra=(PATH="$tools:") ;;
+        own-copy) run=$own_hook ;;
+        own-copy-cwd) RUN_CWD=$own ;;
     esac
     [ -n "$var" ] && extra+=(GATE_MERGE_EXEMPT_INSTANCE="$var")
     got=$(run "$run" "$1" ${extra[@]+"${extra[@]}"})
@@ -290,6 +306,141 @@ row deny  'cd .. && niwa reap'
 row allow 'niwa destroy my-instance'
 row allow 'niwa destroy my-instance --force'
 row allow 'niwa list'
+
+# --- niwa reap past flags on a literal niwa -------------------------------
+# A flag takes at most one value and --no-progress takes none, so reap can
+# only be the subcommand in a flag's place or just after one.
+row deny  'niwa -C .. reap'
+row deny  'niwa -C .. reap --help'
+row deny  'niwa --dir .. reap'
+row deny  'niwa --dir=.. reap'
+row deny  'niwa --no-progress reap'
+row deny  'niwa --no-progress -C .. reap'
+row deny  'niwa -C "$D" reap'
+row deny  'cd /tmp && niwa -C .. reap'
+# The first plain word no flag could own is the subcommand; reap after it is
+# an argument, and runs no reap.
+row allow 'niwa destroy reap'
+row allow 'niwa --no-progress destroy reap'
+# Text handed to a shell asks, as it does for a plain niwa reap.
+row ask   "bash -c 'niwa -C .. reap'"
+row ask   "sh -c 'niwa --no-progress -C x reap'"
+row ask   "echo 'niwa -C .. reap' | bash"
+# A command name that isn't literal keeps today's reading: a flag ahead of
+# reap isn't read through it.
+row allow '"$NIWA" -C .. reap'
+
+# --- A workspace declared scratch for a check -----------------------------
+# Fixtures under a directory spelled physically, as `pwd -P` prints it. Each
+# is a workspace the way bare niwa init writes one, with no repo; the ones
+# after scr add the shape that refuses it. All live outside this repository,
+# so none is in or above the hook's own workspace.
+sbase=$(cd -P "$work" && pwd -P)/scratch
+mkdir -p "$sbase"
+# sws ROOT [DECLARED]: a bare-init workspace at ROOT, declared scratch with
+# DECLARED as the marker's first line (default ROOT), or undeclared for "-".
+sws() {
+    mkdir -p "$1/.niwa/claude" "$1/.claude"
+    printf '[workspace]\nname = "%s"\n' "${1##*/}" > "$1/.niwa/workspace.toml"
+    printf '{"schema_version":3,"instance_name":"","instance_number":0}\n' > "$1/.niwa/instance.json"
+    printf '{}\n' > "$1/.claude/settings.json"
+    case "${2:-$1}" in
+        -) ;;
+        *) printf '%s\n' "${2:-$1}" > "$1/.niwa/scratch-check" ;;
+    esac
+}
+# sinst ROOT NAME: a plain instance with no repo.
+sinst() {
+    mkdir -p "$1/$2/.niwa" "$1/$2/.claude"
+    printf '{"schema_version":3,"instance_name":"%s","instance_number":1}\n' "$2" > "$1/$2/.niwa/instance.json"
+}
+scr=$sbase/scr; sws "$scr"; sinst "$scr" scr-1; mkdir -p "$scr/sub"
+# The scratch's own on_reap and before_remove, which an allowed reap runs.
+scrhk=$sbase/scrhk; sws "$scrhk"; sinst "$scrhk" scrhk-1
+printf '\n[session.on_reap]\ncommand = "true"\n\n[session.before_remove]\ncommand = "true"\n' >> "$scrhk/.niwa/workspace.toml"
+ln -s "$scr" "$sbase/scr-link"
+undecl=$sbase/undecl; sws "$undecl" -
+wrongdecl=$sbase/wrongdecl; sws "$wrongdecl" "$scr"
+slashdecl=$sbase/slashdecl; sws "$slashdecl" "$slashdecl/"
+symdecl=$sbase/symdecl; sws "$symdecl" -; printf '%s\n' "$symdecl" > "$sbase/symdecl-marker"
+ln -s "$sbase/symdecl-marker" "$symdecl/.niwa/scratch-check"
+prov=$sbase/prov; sws "$prov"; : > "$prov/.niwa/.niwa-snapshot.toml"
+provlink=$sbase/provlink; sws "$provlink"; ln -s /nonexistent "$provlink/.niwa/.niwa-snapshot.toml"
+repo=$sbase/repo; sws "$repo"; sinst "$repo" repo-1; mkdir -p "$repo/repo-1/public/r/.git"
+gitfile=$sbase/gitfile; sws "$gitfile"; sinst "$gitfile" gitfile-1; mkdir -p "$gitfile/gitfile-1/public/r"
+printf 'gitdir: /elsewhere\n' > "$gitfile/gitfile-1/public/r/.git"
+shallow=$sbase/shallow; sws "$shallow"; mkdir -p "$shallow/public/r/.git"
+legacy=$sbase/legacy; sws "$legacy"; mkdir -p "$legacy/.niwa/.git"
+rootniwa=$sbase/rootniwa; sws "$rootniwa"; printf '#!/bin/sh\n' > "$rootniwa/niwa"
+# A workspace this hook guards: a copy installed in an instance, at the root,
+# or in the config's hooks.
+hookinst=$sbase/hookinst; sws "$hookinst"; sinst "$hookinst" hookinst-1
+mkdir -p "$hookinst/hookinst-1/.claude/hooks/pre_tool_use"
+cp "$hook" "$hookinst/hookinst-1/.claude/hooks/pre_tool_use/gate-online.sh"
+hookroot=$sbase/hookroot; sws "$hookroot"; mkdir -p "$hookroot/.claude/hooks/pre_tool_use"
+cp "$hook" "$hookroot/.claude/hooks/pre_tool_use/gate-online.sh"
+hookcfg=$sbase/hookcfg; sws "$hookcfg"; mkdir -p "$hookcfg/.niwa/hooks/pre_tool_use"
+ln -s "$hook" "$hookcfg/.niwa/hooks/pre_tool_use/gate-online.sh"
+# The hook's own workspace, declared: a copy of the hook run from inside it,
+# placed where the installed-copy check doesn't look, so only the own-workspace
+# check refuses.
+own=$sbase/own; sws "$own"; sinst "$own" own-1; mkdir -p "$own/own-1/tools"
+cp "$hook" "$own/own-1/tools/gate-online.sh"
+own_hook=$own/own-1/tools/gate-online.sh
+sws "$own/own-1/nested"
+
+# The allowed form: a literal cd to the declared root, then the reap alone.
+row allow "cd $scr && niwa reap"
+row allow "cd $scr && niwa --no-progress reap"
+row allow "cd $scr && niwa reap --no-progress"
+row allow "cd $scr && niwa reap --help"
+row allow "cd $scr && niwa reap -h"
+row allow "cd  $scr  &&  niwa  reap"
+row allow "cd $scrhk && niwa reap"
+row allow "cd $scr && niwa reap" own-copy-cwd
+# Anything else at the declared root keeps the deny.
+row deny  "cd $scr && niwa reap --yes"
+row deny  "cd $scr && niwa reap && echo done"
+row deny  "cd $scr; niwa reap"
+row deny  "cd $scr && niwa -C .. reap"
+row deny  "cd $scr && niwa --dir .. reap"
+row deny  "cd $scr/. && niwa reap"
+row deny  "cd $scr/../scr && niwa reap"
+row deny  "cd $scr/ && niwa reap"
+row deny  "cd $scr/sub && niwa reap"
+row deny  "cd $scr/sub && niwa reap --help"
+row deny  "cd $scr/scr-1 && niwa reap"
+row deny  "cd \"$scr\" && niwa reap"
+row deny  'cd "$ws" && niwa reap'
+row deny  "cd $sbase/scr-link && niwa reap"
+row deny  "cd $sbase/scr-link && niwa reap --help"
+row deny  "cd $sbase && niwa reap"
+row deny  "cd ${scr#/} && niwa reap"
+# Declarations the hook doesn't take.
+row deny  "cd $undecl && niwa reap"
+row deny  "cd $wrongdecl && niwa reap"
+row deny  "cd $slashdecl && niwa reap"
+row deny  "cd $symdecl && niwa reap"
+# Declared, but shaped like a workspace that isn't a scratch made for a check.
+row deny  "cd $prov && niwa reap"
+row deny  "cd $provlink && niwa reap"
+row deny  "cd $repo && niwa reap"
+row deny  "cd $gitfile && niwa reap"
+row deny  "cd $shallow && niwa reap"
+row deny  "cd $legacy && niwa reap"
+row deny  "cd $rootniwa && niwa reap"
+row deny  "cd $hookinst && niwa reap"
+row deny  "cd $hookroot && niwa reap"
+row deny  "cd $hookcfg && niwa reap"
+# This hook's PATH holds a relative or empty entry.
+row deny  "cd $scr && niwa reap" path-dot
+row deny  "cd $scr && niwa reap" path-empty
+# This workspace, an instance of it and a workspace nested in it, all
+# declared: never reapable through the declaration.
+row deny  "cd $own && niwa reap" own-copy
+row deny  "cd $own/own-1/nested && niwa reap" own-copy
+row deny  'niwa reap' own-copy
+row allow "cd $scr && niwa reap" own-copy
 
 # --- Force-push asks ------------------------------------------------------
 row ask   'git push --force'
