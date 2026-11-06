@@ -1747,16 +1747,20 @@ scratch_guard_prov() {
     [ ! -e "$1/.niwa/.niwa-snapshot.toml" ] && [ ! -L "$1/.niwa/.niwa-snapshot.toml" ]
 }
 
-# scratch_none PATTERN...: no path matches any PATTERN, where * also matches
-# a name that starts with a dot (a repo named .github, say), which a plain
-# glob skips. Any file type counts, a symlink included. dotglob is restored
+# scratch_none ROOT PATTERN...: no path ROOT/PATTERN exists, where * also
+# matches a name that starts with a dot (a repo named .github, say), which a
+# plain glob skips. The patterns are expanded here, after dotglob is set, not
+# at the call. Any file type counts, a symlink included. dotglob is restored
 # as it was.
 scratch_none() {
-    local g had=0 r=0
+    local root=$1 p g had=0 r=0
+    shift
     shopt -q dotglob && had=1
     shopt -s dotglob
-    for g in "$@"; do
-        if [ -e "$g" ] || [ -L "$g" ]; then r=1; break; fi
+    for p in "$@"; do
+        for g in "$root"/$p; do
+            if [ -e "$g" ] || [ -L "$g" ]; then r=1; fi
+        done
     done
     [ "$had" = 1 ] || shopt -u dotglob
     return "$r"
@@ -1767,7 +1771,7 @@ scratch_none() {
 # instance. Any file type counts, a symlink included, and so does a name that
 # starts with a dot.
 scratch_guard_repo() {
-    scratch_none "$1"/*/*/.git "$1"/*/*/*/.git
+    scratch_none "$1" '*/*/.git' '*/*/*/.git'
 }
 
 # scratch_guard_path ROOT: after the cd, nothing at ROOT can stand in for niwa:
@@ -1793,9 +1797,9 @@ scratch_guard_legacy() {
 # made for a check. Any file type counts, a symlink included, and so does an
 # instance whose name starts with a dot.
 scratch_guard_hook() {
-    scratch_none "$1"/.niwa/hooks/pre_tool_use/gate-online*.sh \
-        "$1"/.claude/hooks/pre_tool_use/gate-online*.sh \
-        "$1"/*/.claude/hooks/pre_tool_use/gate-online*.sh
+    scratch_none "$1" '.niwa/hooks/pre_tool_use/gate-online*.sh' \
+        '.claude/hooks/pre_tool_use/gate-online*.sh' \
+        '*/.claude/hooks/pre_tool_use/gate-online*.sh'
 }
 
 # scratch_target ROOT: ROOT, already its own resolved path, is a real
