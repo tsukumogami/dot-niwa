@@ -367,6 +367,9 @@ ln -s "$sbase/symdecl-marker" "$symdecl/.niwa/scratch-check"
 prov=$sbase/prov; sws "$prov"; : > "$prov/.niwa/.niwa-snapshot.toml"
 provlink=$sbase/provlink; sws "$provlink"; ln -s /nonexistent "$provlink/.niwa/.niwa-snapshot.toml"
 repo=$sbase/repo; sws "$repo"; sinst "$repo" repo-1; mkdir -p "$repo/repo-1/public/r/.git"
+# A repo named with a leading dot, as niwa clones .github, and an instance
+# named that way carrying a copy.
+dotrepo=$sbase/dotrepo; sws "$dotrepo"; sinst "$dotrepo" dotrepo-1; mkdir -p "$dotrepo/dotrepo-1/public/.github/.git"
 gitfile=$sbase/gitfile; sws "$gitfile"; sinst "$gitfile" gitfile-1; mkdir -p "$gitfile/gitfile-1/public/r"
 printf 'gitdir: /elsewhere\n' > "$gitfile/gitfile-1/public/r/.git"
 shallow=$sbase/shallow; sws "$shallow"; mkdir -p "$shallow/public/r/.git"
@@ -381,6 +384,8 @@ hookroot=$sbase/hookroot; sws "$hookroot"; mkdir -p "$hookroot/.claude/hooks/pre
 cp "$hook" "$hookroot/.claude/hooks/pre_tool_use/gate-online.sh"
 hookcfg=$sbase/hookcfg; sws "$hookcfg"; mkdir -p "$hookcfg/.niwa/hooks/pre_tool_use"
 ln -s "$hook" "$hookcfg/.niwa/hooks/pre_tool_use/gate-online.sh"
+dothook=$sbase/dothook; sws "$dothook"; mkdir -p "$dothook/.inst/.claude/hooks/pre_tool_use"
+cp "$hook" "$dothook/.inst/.claude/hooks/pre_tool_use/gate-online.sh"
 # An instance entry that links to an instance carrying a copy.
 hooklink=$sbase/hooklink; sws "$hooklink"; ln -s "$hookinst/hookinst-1" "$hooklink/hooklink-1"
 # The hook's own workspace, declared: a copy of the hook run from inside it,
@@ -427,6 +432,7 @@ row deny  "cd $symdecl && niwa reap"
 row deny  "cd $prov && niwa reap"
 row deny  "cd $provlink && niwa reap"
 row deny  "cd $repo && niwa reap"
+row deny  "cd $dotrepo && niwa reap"
 row deny  "cd $gitfile && niwa reap"
 row deny  "cd $shallow && niwa reap"
 row deny  "cd $legacy && niwa reap"
@@ -435,6 +441,7 @@ row deny  "cd $hookinst && niwa reap"
 row deny  "cd $hookroot && niwa reap"
 row deny  "cd $hookcfg && niwa reap"
 row deny  "cd $hooklink && niwa reap"
+row deny  "cd $dothook && niwa reap"
 # This hook's PATH holds a relative or empty entry.
 row deny  "cd $scr && niwa reap" path-dot
 row deny  "cd $scr && niwa reap" path-empty

@@ -1747,15 +1747,27 @@ scratch_guard_prov() {
     [ ! -e "$1/.niwa/.niwa-snapshot.toml" ] && [ ! -L "$1/.niwa/.niwa-snapshot.toml" ]
 }
 
+# scratch_none PATTERN...: no path matches any PATTERN, where * also matches
+# a name that starts with a dot (a repo named .github, say), which a plain
+# glob skips. Any file type counts, a symlink included. dotglob is restored
+# as it was.
+scratch_none() {
+    local g had=0 r=0
+    shopt -q dotglob && had=1
+    shopt -s dotglob
+    for g in "$@"; do
+        if [ -e "$g" ] || [ -L "$g" ]; then r=1; break; fi
+    done
+    [ "$had" = 1 ] || shopt -u dotglob
+    return "$r"
+}
+
 # scratch_guard_repo ROOT: ROOT holds no .git where niwa clones repos, at
 # <root>/<instance>/<group>/<repo>, or one level up for a root that is its own
-# instance. Any file type counts, a symlink included.
+# instance. Any file type counts, a symlink included, and so does a name that
+# starts with a dot.
 scratch_guard_repo() {
-    local g
-    for g in "$1"/*/*/.git "$1"/*/*/*/.git; do
-        [ -e "$g" ] || [ -L "$g" ] && return 1
-    done
-    return 0
+    scratch_none "$1"/*/*/.git "$1"/*/*/*/.git
 }
 
 # scratch_guard_path ROOT: after the cd, nothing at ROOT can stand in for niwa:
@@ -1778,15 +1790,12 @@ scratch_guard_legacy() {
 # in its config's hooks, at its root, or at an instance's root, where niwa
 # installs gate-online.sh (and gate-online.local.sh in each repo, which the
 # repo check already refuses). A workspace this hook guards is not a scratch
-# made for a check. Any file type counts, a symlink included.
+# made for a check. Any file type counts, a symlink included, and so does an
+# instance whose name starts with a dot.
 scratch_guard_hook() {
-    local h
-    for h in "$1"/.niwa/hooks/pre_tool_use/gate-online*.sh \
+    scratch_none "$1"/.niwa/hooks/pre_tool_use/gate-online*.sh \
         "$1"/.claude/hooks/pre_tool_use/gate-online*.sh \
-        "$1"/*/.claude/hooks/pre_tool_use/gate-online*.sh; do
-        [ -e "$h" ] || [ -L "$h" ] && return 1
-    done
-    return 0
+        "$1"/*/.claude/hooks/pre_tool_use/gate-online*.sh
 }
 
 # scratch_target ROOT: ROOT, already its own resolved path, is a real
