@@ -62,6 +62,28 @@ jobs:
       - name: Run env-print-guard case table
         run: bash tests/env-print-guard.test.sh
 
+  # gate-online's flag walk reads niwa's --no-progress as taking no value.
+  # The hook's own table can't see niwa's flag types, so this asks a pinned
+  # niwa release. The binary's sha256 is pinned here, not read from the
+  # release's checksums.txt, so a replaced asset fails the job. Bump
+  # NIWA_VERSION and NIWA_SHA256 together.
+  niwa-flags:
+    runs-on: ubuntu-latest
+    env:
+      NIWA_VERSION: v0.40.0
+      NIWA_SHA256: 34cb8fd88892acaff4b37ca6d33a3a9ccdee16c8de75b0932e106a1893b98a1d
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download pinned niwa
+        run: |
+          mkdir -p "$RUNNER_TEMP/niwa-bin"
+          curl -fsSL -o "$RUNNER_TEMP/niwa-bin/niwa" \
+            "https://github.com/tsukumogami/niwa/releases/download/${NIWA_VERSION}/niwa-linux-amd64"
+          echo "${NIWA_SHA256}  $RUNNER_TEMP/niwa-bin/niwa" | sha256sum -c -
+          chmod +x "$RUNNER_TEMP/niwa-bin/niwa"
+      - name: Run niwa flag pin
+        run: bash tests/niwa-flags.test.sh "$RUNNER_TEMP/niwa-bin/niwa"
+
   # The on-reap and before-remove commands are shell text inside TOML: this
   # parses them and checks each byte for byte, then runs them under each OS's
   # sh against stubs.
