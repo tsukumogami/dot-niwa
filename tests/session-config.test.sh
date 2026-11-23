@@ -101,7 +101,7 @@ else
 fi
 
 shape=$(cat "$work/shape.json")
-want='{"before_remove_env": ["KOTO_HOME"], "before_remove_keys": ["command", "env", "timeout"], "before_remove_timeout": "10s", "dispatch_env": {"passthrough": ["KOTO_DISPATCHER_ANCHOR", "CLAUDE_CODE_AUTO_COMPACT_WINDOW"], "unset": ["KOTO_ANCHOR"]}, "on_reap_keys": ["command", "timeout"], "session_keys": ["before_remove", "dispatch_env", "on_reap"], "timeout": "20s"}'
+want='{"before_remove_env": ["KOTO_HOME"], "before_remove_keys": ["command", "env", "timeout"], "before_remove_timeout": "10s", "dispatch_env": {"passthrough": ["KOTO_DISPATCHER_ANCHOR"], "unset": ["KOTO_ANCHOR"]}, "on_reap_keys": ["command", "timeout"], "session_keys": ["before_remove", "dispatch_env", "on_reap"], "timeout": "20s"}'
 if [ "$shape" = "$want" ]; then
     ok "timeouts, dispatch_env lists and [session] keys are exactly as declared"
 else
