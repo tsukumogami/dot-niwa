@@ -62,8 +62,14 @@ promote = ["GH_TOKEN", "GATE_MERGE_EXEMPT_INSTANCE", "REVIEW_SHADOW_SITES", "JEV
 # dispatcher's koto anchor reaches the worker, so the worker's own anchor
 # records who dispatched it. The launching shell's KOTO_ANCHOR is dropped, so a
 # worker never writes as the session that launched it. Needs niwa 0.36.0.
+#
+# CLAUDE_CODE_AUTO_COMPACT_WINDOW is copied only when the dispatching shell sets
+# it, so a single dispatch can carry a chosen Claude Code auto-compaction
+# window; a dispatch that doesn't set it gets nothing. It's temporary: remove it
+# once niwa has a per-dispatch setting for the window (dispatch profiles), since
+# that design keeps the name out of dispatch_env.
 [session.dispatch_env]
-passthrough = ["KOTO_DISPATCHER_ANCHOR"]
+passthrough = ["KOTO_DISPATCHER_ANCHOR", "CLAUDE_CODE_AUTO_COMPACT_WINDOW"]
 unset = ["KOTO_ANCHOR"]
 
 # Runs once for each session niwa reaps, in two steps. The first closes the
