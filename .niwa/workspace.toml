@@ -66,6 +66,18 @@ promote = ["GH_TOKEN", "GATE_MERGE_EXEMPT_INSTANCE", "REVIEW_SHADOW_SITES", "JEV
 passthrough = ["KOTO_DISPATCHER_ANCHOR"]
 unset = ["KOTO_ANCHOR"]
 
+# A profile that trims a dispatched coordinator's turn-0 context. It applies
+# only to a `niwa dispatch --profile coordinator`; no default profile is set, so
+# every other dispatch, and every session started by hand, launches as before.
+# It denies tools a coordinator never calls and leaves out Claude Code's bundled
+# skills and the account's connectors. A leading slash invocation in the
+# dispatch prompt still reaches its skill with Skill denied. Needs niwa 0.44.0.
+[session.dispatch_profiles.coordinator]
+drop_tools = ["Artifact", "Workflow", "SendFeedback", "ReportFindings",
+              "EnterWorktree", "AskUserQuestion", "Skill"]
+drop_bundled_skills = true
+drop_account_connectors = true
+
 # Runs once for each session niwa reaps, in two steps. The first closes the
 # reaped session's koto anchor, and is skipped quietly when there's no reap
 # key, no koto, or a koto without `koto session anchor close`. The second

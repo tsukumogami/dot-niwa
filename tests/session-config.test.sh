@@ -4,12 +4,12 @@
 # The on-reap and before-remove commands are shell text inside TOML, so a
 # quoting slip changes what niwa runs without any load error. The first checks
 # parse the file with a TOML parser and compare each command with the expected
-# text byte for byte, along with the timeouts and both dispatch_env lists. The
-# rest run each parsed command under sh -c, the way niwa does, with only the
-# variables niwa passes it (PATH, HOME, NIWA_REAP_KEY and NIWA_SESSION_ID for
-# on_reap; PATH, HOME, NIWA_REMOVE_PATH, NIWA_REMOVE_STEP and NIWA_SESSION_IDS
-# for before_remove), against stubs in a scratch HOME: no koto or shirabe
-# installed on the host is ever reached.
+# text byte for byte, along with the timeouts, both dispatch_env lists and the
+# dispatch profiles. The rest run each parsed command under sh -c, the way niwa
+# does, with only the variables niwa passes it (PATH, HOME, NIWA_REAP_KEY and
+# NIWA_SESSION_ID for on_reap; PATH, HOME, NIWA_REMOVE_PATH, NIWA_REMOVE_STEP
+# and NIWA_SESSION_IDS for before_remove), against stubs in a scratch HOME: no
+# koto or shirabe installed on the host is ever reached.
 #
 # Usage: tests/session-config.test.sh [path-to-workspace.toml]
 #
@@ -79,6 +79,7 @@ with open(out + "/shape.json", "w", encoding="utf-8") as f:
         "before_remove_timeout": before_remove.get("timeout"),
         "before_remove_env": before_remove.get("env"),
         "dispatch_env": session.get("dispatch_env"),
+        "dispatch_profiles": session.get("dispatch_profiles"),
     }, f, sort_keys=True)
 EOF
 then
@@ -101,9 +102,9 @@ else
 fi
 
 shape=$(cat "$work/shape.json")
-want='{"before_remove_env": ["KOTO_HOME"], "before_remove_keys": ["command", "env", "timeout"], "before_remove_timeout": "10s", "dispatch_env": {"passthrough": ["KOTO_DISPATCHER_ANCHOR"], "unset": ["KOTO_ANCHOR"]}, "on_reap_keys": ["command", "timeout"], "session_keys": ["before_remove", "dispatch_env", "on_reap"], "timeout": "20s"}'
+want='{"before_remove_env": ["KOTO_HOME"], "before_remove_keys": ["command", "env", "timeout"], "before_remove_timeout": "10s", "dispatch_env": {"passthrough": ["KOTO_DISPATCHER_ANCHOR"], "unset": ["KOTO_ANCHOR"]}, "dispatch_profiles": {"coordinator": {"drop_account_connectors": true, "drop_bundled_skills": true, "drop_tools": ["Artifact", "Workflow", "SendFeedback", "ReportFindings", "EnterWorktree", "AskUserQuestion", "Skill"]}}, "on_reap_keys": ["command", "timeout"], "session_keys": ["before_remove", "dispatch_env", "dispatch_profiles", "on_reap"], "timeout": "20s"}'
 if [ "$shape" = "$want" ]; then
-    ok "timeouts, dispatch_env lists and [session] keys are exactly as declared"
+    ok "timeouts, dispatch_env lists, dispatch profiles and [session] keys are exactly as declared"
 else
     bad "[session] shape: got $shape"
 fi
