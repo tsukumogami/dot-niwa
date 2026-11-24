@@ -102,7 +102,7 @@ else
 fi
 
 shape=$(cat "$work/shape.json")
-want='{"before_remove_env": ["KOTO_HOME"], "before_remove_keys": ["command", "env", "timeout"], "before_remove_timeout": "10s", "dispatch_env": {"passthrough": ["KOTO_DISPATCHER_ANCHOR"], "unset": ["KOTO_ANCHOR"]}, "dispatch_profiles": {"coordinator": {"drop_account_connectors": true, "drop_bundled_skills": true, "drop_tools": ["Artifact", "Workflow", "SendFeedback", "ReportFindings", "EnterWorktree", "AskUserQuestion", "Skill"]}}, "on_reap_keys": ["command", "timeout"], "session_keys": ["before_remove", "dispatch_env", "dispatch_profiles", "on_reap"], "timeout": "20s"}'
+want='{"before_remove_env": ["KOTO_HOME"], "before_remove_keys": ["command", "env", "timeout"], "before_remove_timeout": "10s", "dispatch_env": {"passthrough": ["KOTO_DISPATCHER_ANCHOR"], "unset": ["KOTO_ANCHOR"]}, "dispatch_profiles": {"coordinator": {"drop_account_connectors": true, "drop_bundled_skills": true, "drop_tools": ["Artifact", "Workflow", "SendFeedback", "ReportFindings", "EnterWorktree", "Skill"]}}, "on_reap_keys": ["command", "timeout"], "session_keys": ["before_remove", "dispatch_env", "dispatch_profiles", "on_reap"], "timeout": "20s"}'
 if [ "$shape" = "$want" ]; then
     ok "timeouts, dispatch_env lists, dispatch profiles and [session] keys are exactly as declared"
 else

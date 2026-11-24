@@ -70,11 +70,13 @@ unset = ["KOTO_ANCHOR"]
 # only to a `niwa dispatch --profile coordinator`; no default profile is set, so
 # every other dispatch, and every session started by hand, launches as before.
 # It denies tools a coordinator never calls and leaves out Claude Code's bundled
-# skills and the account's connectors. A leading slash invocation in the
+# skills and the account's connectors. It keeps AskUserQuestion, which niwa's
+# guide drops, because people work inside this workspace's dispatched
+# coordinators and get asked questions there. A leading slash invocation in the
 # dispatch prompt still reaches its skill with Skill denied. Needs niwa 0.44.0.
 [session.dispatch_profiles.coordinator]
 drop_tools = ["Artifact", "Workflow", "SendFeedback", "ReportFindings",
-              "EnterWorktree", "AskUserQuestion", "Skill"]
+              "EnterWorktree", "Skill"]
 drop_bundled_skills = true
 drop_account_connectors = true
 
