@@ -85,6 +85,17 @@ unset = ["KOTO_ANCHOR"]
 [session.dispatch_profiles.worker]
 auto_compact_window = 280000
 
+# A dispatched lane coordinator's Claude Code compaction window, taken by a
+# `niwa dispatch --profile coordinator-window`. It holds only the window; the
+# `coordinator` trim below is a separate profile, and a dispatch takes one
+# --profile. No default profile is set, so a coordinator dispatched without
+# this profile launches with no window, as before. Coordinators take it one at
+# a time once the stale-note fix (tsukumogami/shirabe#2135, fixed by
+# tsukumogami/shirabe#2146) is released and installed; see the step 8
+# amendment in shirabe's docs/plans/PLAN-handoff-brief.md. Needs niwa 0.45.0.
+[session.dispatch_profiles.coordinator-window]
+auto_compact_window = 280000
+
 # A profile that trims a dispatched coordinator's turn-0 context. It applies
 # only to a `niwa dispatch --profile coordinator`; no default profile is set, so
 # every other dispatch, and every session started by hand, launches as before.
