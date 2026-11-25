@@ -27,3 +27,9 @@ source .local.env
 ```
 
 niwa generates that file when it applies the workspace configuration, and the repo's own `.gitignore` keeps it out of git.
+
+## Build Output Cleanup: on
+
+This turns on shirabe's build-output cleanup for koto. When a `/shirabe:execute` run ends with its pull
+request's CI green, the paths koto's verification map lists under `build_output` are removed from the run's checkout.
+Remove this line to keep build trees after a run.
