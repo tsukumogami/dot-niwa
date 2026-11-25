@@ -78,21 +78,16 @@ promote = ["GH_TOKEN", "GATE_MERGE_EXEMPT_INSTANCE", "REVIEW_SHADOW_SITES", "JEV
 passthrough = ["KOTO_DISPATCHER_ANCHOR"]
 unset = ["KOTO_ANCHOR"]
 
-# Every `niwa dispatch` without --profile takes the worker profile, so a
-# dispatched worker compacts at its window. A session started by hand,
-# `niwa watch`'s launches, resume and retask don't take the default. Needs
-# niwa 0.45.0.
-[session]
-default_dispatch_profile = "worker"
-
-# The worker's Claude Code compaction window. niwa renders it into the launch
-# --settings env block only. Needs niwa 0.45.0.
+# The worker's Claude Code compaction window, taken by a `niwa dispatch
+# --profile worker`. No default profile is set, so a dispatch without
+# --profile, a coordinator's included, launches with no window. niwa renders
+# it into the launch --settings env block only. Needs niwa 0.45.0.
 [session.dispatch_profiles.worker]
 auto_compact_window = 280000
 
 # A profile that trims a dispatched coordinator's turn-0 context. It applies
-# only to a `niwa dispatch --profile coordinator`; every other dispatch takes
-# the worker default above.
+# only to a `niwa dispatch --profile coordinator`; no default profile is set, so
+# every other dispatch, and every session started by hand, launches as before.
 # It denies tools a coordinator never calls and leaves out Claude Code's bundled
 # skills and the account's connectors. It keeps AskUserQuestion, which niwa's
 # guide drops, because people work inside this workspace's dispatched
