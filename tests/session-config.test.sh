@@ -48,10 +48,11 @@ EOF
 )
 printf '%s; %s' "$step1" "$step2" >"$work/expected"
 
-# The expected before-remove command. Each guard exits 0, so the removal goes
-# ahead as before; otherwise koto's own exit status decides.
+# The expected before-remove command. A path that's gone exits 0, so niwa
+# removes it; no koto, or a koto whose `session needed --help` fails, exits 2,
+# so niwa keeps it; otherwise koto's own exit status decides.
 before=$(cat <<'EOF'
-[ -n "$NIWA_REMOVE_PATH" ] && [ ! -e "$NIWA_REMOVE_PATH" ] && [ ! -L "$NIWA_REMOVE_PATH" ] && exit 0; command -v koto >/dev/null 2>&1 || exit 0; koto session needed --help >/dev/null 2>&1 || exit 0; exec koto session needed "$NIWA_REMOVE_PATH"
+[ -n "$NIWA_REMOVE_PATH" ] && [ ! -e "$NIWA_REMOVE_PATH" ] && [ ! -L "$NIWA_REMOVE_PATH" ] && exit 0; command -v koto >/dev/null 2>&1 || exit 2; koto session needed --help >/dev/null 2>&1 || exit 2; exec koto session needed "$NIWA_REMOVE_PATH"
 EOF
 )
 printf '%s' "$before" >"$work/expected-before"
@@ -222,6 +223,20 @@ exit 2
 EOF
 chmod +x "$oldkoto/koto"
 
+# A koto whose `session needed --help` fails some other way, with a status
+# other than 2, so the case below checks the guard's own exit code.
+brokenkoto=$work/broken-koto
+mkdir -p "$brokenkoto"
+cp -P "$base"/* "$brokenkoto"/
+cat >"$brokenkoto/koto" <<EOF
+#!$(command -v sh)
+for a in "\$@"; do printf '[%s]' "\$a"; done >>"$work/needed.log"
+echo >>"$work/needed.log"
+echo "error: something else went wrong" >&2
+exit 1
+EOF
+chmod +x "$brokenkoto/koto"
+
 # run_before <PATH> <remove-path> <koto exit> <koto line>: the command under
 # sh -c with niwa's fixed environment for the gate. Prints the exit status.
 run_before() {
@@ -291,18 +306,26 @@ else
 fi
 
 rc=$(run_before "$base" "$inst" 1 "needed")
-if [ "$rc" = 0 ] && [ ! -s "$work/out" ]; then
-    ok "no koto on PATH: exits 0 quietly, so the removal goes ahead as before"
+if [ "$rc" = 2 ] && [ ! -s "$work/out" ]; then
+    ok "no koto on PATH: exits 2 quietly, so niwa keeps the path"
 else
-    bad "no koto: rc=$rc out=[$(cat "$work/out")]"
+    bad "no koto: wanted a non-zero exit (2) so niwa keeps the path: rc=$rc out=[$(cat "$work/out")]"
 fi
 
 rc=$(run_before "$oldkoto" "$inst" 1 "needed")
-if [ "$rc" = 0 ] && [ ! -s "$work/out" ] \
+if [ "$rc" = 2 ] && [ ! -s "$work/out" ] \
     && [ "$(cat "$work/needed.log")" = "[session][needed][--help]" ]; then
-    ok "koto without the verb: exits 0 quietly and never asks about the path"
+    ok "koto without the verb: exits 2 quietly, so niwa keeps the path, and never asks about it"
 else
-    bad "old koto: rc=$rc log=[$(cat "$work/needed.log")] out=[$(cat "$work/out")]"
+    bad "old koto: wanted a non-zero exit (2) so niwa keeps the path: rc=$rc log=[$(cat "$work/needed.log")] out=[$(cat "$work/out")]"
+fi
+
+rc=$(run_before "$brokenkoto" "$inst" 1 "needed")
+if [ "$rc" = 2 ] && [ ! -s "$work/out" ] \
+    && [ "$(cat "$work/needed.log")" = "[session][needed][--help]" ]; then
+    ok "koto whose --help fails another way: exits 2, not koto's status, and never asks about the path"
+else
+    bad "broken koto: wanted a non-zero exit (2) so niwa keeps the path: rc=$rc log=[$(cat "$work/needed.log")] out=[$(cat "$work/out")]"
 fi
 
 echo
