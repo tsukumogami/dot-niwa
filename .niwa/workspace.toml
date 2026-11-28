@@ -131,14 +131,15 @@ timeout = "20s"
 # decide) or a run past the timeout also keeps it. `niwa destroy --force`
 # overrides a keep.
 #
-# Three guards come first, and each exits 0 so the removal goes ahead as
-# before. A path that no longer exists holds nothing to keep, and koto would
-# answer 2 for it, so a staged review whose instance is already gone would be
-# kept on every pass. A host with no koto, or a koto without `koto session
-# needed`, keeps today's behaviour; so does one whose --help fails for any
-# other reason. `exec` makes koto's exit status the command's, and puts koto in
-# the process niwa kills on a timeout. koto answers from local files well
-# inside the 10s, which is also niwa's default.
+# Three guards come first. A path that no longer exists holds nothing to keep,
+# so the first exits 0 and niwa removes it; koto would answer 2 for it, so a
+# staged review whose instance is already gone would be kept on every pass.
+# The other two exit 2, so niwa keeps the path, when koto isn't on PATH or
+# `koto session needed --help` fails (a koto without the verb, or one broken
+# for any other reason). A host without a working koto removes nothing until
+# koto is installed or fixed. `exec` makes koto's exit status the command's,
+# and puts koto in the process niwa kills on a timeout. koto answers from local
+# files well inside the 10s, which is also niwa's default.
 #
 # niwa runs the command with PATH, HOME and the names in env only. koto keeps
 # its sessions under $HOME/.koto under either backend, unless KOTO_HOME moves
@@ -147,7 +148,7 @@ timeout = "20s"
 # TOML literal string checked byte for byte by tests/session-config.test.sh.
 # Needs niwa 0.40.0 and koto 0.27.0.
 [session.before_remove]
-command = '''[ -n "$NIWA_REMOVE_PATH" ] && [ ! -e "$NIWA_REMOVE_PATH" ] && [ ! -L "$NIWA_REMOVE_PATH" ] && exit 0; command -v koto >/dev/null 2>&1 || exit 0; koto session needed --help >/dev/null 2>&1 || exit 0; exec koto session needed "$NIWA_REMOVE_PATH"'''
+command = '''[ -n "$NIWA_REMOVE_PATH" ] && [ ! -e "$NIWA_REMOVE_PATH" ] && [ ! -L "$NIWA_REMOVE_PATH" ] && exit 0; command -v koto >/dev/null 2>&1 || exit 2; koto session needed --help >/dev/null 2>&1 || exit 2; exec koto session needed "$NIWA_REMOVE_PATH"'''
 timeout = "10s"
 env = ["KOTO_HOME"]
 
